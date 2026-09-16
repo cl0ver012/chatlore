@@ -10,6 +10,9 @@ name: Lock
 
 on:
   workflow_dispatch:
+  # Temporary: run on push while the workflow is not yet on the default branch.
+  push:
+    branches: [chore/uv-lock]
 
 permissions:
   contents: read
