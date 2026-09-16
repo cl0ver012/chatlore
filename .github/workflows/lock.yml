@@ -1,0 +1,38 @@
+name: Lock
+
+# Resolves uv.lock on a clean runner and publishes it as a workflow artifact.
+# Useful when uv cannot resolve dependencies on a developer machine.
+#
+#   gh workflow run lock.yml --ref <branch>
+#   gh run download <run-id> --name uv-lock
+#
+# The downloaded uv.lock is then committed like any other change.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    name: Resolve uv.lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Resolve
+        run: uv lock
+
+      - name: Upload lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: uv-lock
+          path: uv.lock
+          if-no-files-found: error

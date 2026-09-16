@@ -13,3 +13,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `chatlore` command-line entry point with `--version` and a `doctor` command.
 - GitHub Actions CI running ruff, mypy, and pytest on Linux and Windows.
 - Development plan under `docs/DEVELOPMENT_PLAN.md`.
+- pre-commit configuration with ruff and basic hygiene hooks.
+- `uv.lock` with locked installs in CI, plus a manual Lock workflow to refresh it.
