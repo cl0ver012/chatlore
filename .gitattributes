@@ -1,0 +1,8 @@
+# Normalise line endings to LF in the repository regardless of the host OS.
+* text=auto eol=lf
+
+# Binary fixtures and assets
+*.png binary
+*.jpg binary
+*.gif binary
+*.zip binary
