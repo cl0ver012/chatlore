@@ -31,9 +31,8 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
 
-      # Switch to `uv sync --locked` once uv.lock is committed.
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --locked
 
       - name: Lint
         run: uv run ruff check .

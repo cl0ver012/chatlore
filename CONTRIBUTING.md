@@ -22,6 +22,13 @@ uv run pytest
 
 `uv run ruff format .` fixes formatting in place.
 
+Install the pre-commit hooks once so formatting and lint run automatically on
+every commit:
+
+```bash
+uv run pre-commit install
+```
+
 If uv cannot reach the network on your machine, a plain virtual environment
 works too and the checks are the same:
 
