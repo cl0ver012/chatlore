@@ -14,3 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI running ruff, mypy, and pytest on Linux and Windows.
 - pre-commit configuration with ruff and basic hygiene hooks.
 - `uv.lock` with locked installs in CI, plus a manual Lock workflow to refresh it.
+- Canonical conversation model (`chatlore.models`) that every importer targets, with
+  branch-aware message trees, UTC-normalised timestamps, and strict validation.
+- Deterministic conversation and message ids plus content hashes (`chatlore.ids`).

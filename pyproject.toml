@@ -30,8 +30,9 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "typer>=0.15",
+  "pydantic>=2.9",
   "rich>=13.7",
+  "typer>=0.15",
 ]
 
 [project.urls]
@@ -88,6 +89,7 @@ files = ["src", "tests"]
 mypy_path = "src"
 warn_unreachable = true
 pretty = true
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
