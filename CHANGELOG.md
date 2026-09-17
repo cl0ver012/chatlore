@@ -17,3 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonical conversation model (`chatlore.models`) that every importer targets, with
   branch-aware message trees, UTC-normalised timestamps, and strict validation.
 - Deterministic conversation and message ids plus content hashes (`chatlore.ids`).
+- Importers for ChatGPT, Claude, and Gemini (Google Takeout) exports and for Markdown
+  folders such as Obsidian vaults. Zips, extracted folders, and single files are accepted,
+  branches from regenerated or edited messages are preserved, and records that cannot be
+  parsed are skipped and reported instead of aborting the import.
+- `chatlore import` with source detection and `--dry-run`, `chatlore note`, and
+  `chatlore stats`.
+- An on-disk library of plain JSON files with idempotent, hash-based imports.
+- Importer guide in `docs/importers.md`.
