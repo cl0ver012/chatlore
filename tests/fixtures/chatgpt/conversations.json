@@ -1,0 +1,176 @@
+[
+  {
+    "title": "Postgres indexing",
+    "create_time": 1767261600.0,
+    "update_time": 1767265200.5,
+    "conversation_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+    "default_model_slug": "gpt-5",
+    "current_node": "a3",
+    "is_archived": false,
+    "mapping": {
+      "root": { "id": "root", "message": null, "parent": null, "children": ["sys"] },
+      "sys": {
+        "id": "sys",
+        "parent": "root",
+        "children": ["u1"],
+        "message": {
+          "id": "sys",
+          "author": { "role": "system", "name": null, "metadata": {} },
+          "create_time": null,
+          "content": { "content_type": "text", "parts": [""] },
+          "metadata": { "is_visually_hidden_from_conversation": true }
+        }
+      },
+      "u1": {
+        "id": "u1",
+        "parent": "sys",
+        "children": ["a1", "a2"],
+        "message": {
+          "id": "u1",
+          "author": { "role": "user", "name": null, "metadata": {} },
+          "create_time": 1767261600.0,
+          "content": { "content_type": "text", "parts": ["Why is my query on orders slow?"] },
+          "metadata": {
+            "attachments": [{ "id": "file-1", "name": "explain.txt", "mime_type": "text/plain" }]
+          }
+        }
+      },
+      "a1": {
+        "id": "a1",
+        "parent": "u1",
+        "children": [],
+        "message": {
+          "id": "a1",
+          "author": { "role": "assistant", "name": null, "metadata": {} },
+          "create_time": 1767261610.0,
+          "content": { "content_type": "text", "parts": ["First answer that was regenerated."] },
+          "metadata": { "model_slug": "gpt-5" }
+        }
+      },
+      "a2": {
+        "id": "a2",
+        "parent": "u1",
+        "children": ["u2"],
+        "message": {
+          "id": "a2",
+          "author": { "role": "assistant", "name": null, "metadata": {} },
+          "create_time": 1767261660.0,
+          "content": {
+            "content_type": "text",
+            "parts": ["You are missing an index on customer_id. Add a composite index."]
+          },
+          "metadata": { "model_slug": "gpt-5" }
+        }
+      },
+      "u2": {
+        "id": "u2",
+        "parent": "a2",
+        "children": ["t1"],
+        "message": {
+          "id": "u2",
+          "author": { "role": "user", "name": null, "metadata": {} },
+          "create_time": 1767261700.0,
+          "content": {
+            "content_type": "multimodal_text",
+            "parts": [
+              { "content_type": "image_asset_pointer", "asset_pointer": "file-service://file-2" },
+              "Here is the plan output. Can you write the statement?"
+            ]
+          },
+          "metadata": {}
+        }
+      },
+      "t1": {
+        "id": "t1",
+        "parent": "u2",
+        "children": ["c1"],
+        "message": {
+          "id": "t1",
+          "author": { "role": "assistant", "name": null, "metadata": {} },
+          "create_time": 1767261705.0,
+          "content": { "content_type": "thoughts", "thoughts": [{ "summary": "x", "content": "y" }] },
+          "metadata": { "model_slug": "gpt-5" }
+        }
+      },
+      "c1": {
+        "id": "c1",
+        "parent": "t1",
+        "children": ["x1"],
+        "message": {
+          "id": "c1",
+          "author": { "role": "assistant", "name": null, "metadata": {} },
+          "create_time": 1767261710.0,
+          "content": {
+            "content_type": "code",
+            "language": "sql",
+            "text": "CREATE INDEX idx_orders_customer ON orders (customer_id, created_at);"
+          },
+          "metadata": { "model_slug": "gpt-5" }
+        }
+      },
+      "x1": {
+        "id": "x1",
+        "parent": "c1",
+        "children": ["a3"],
+        "message": {
+          "id": "x1",
+          "author": { "role": "tool", "name": "python", "metadata": {} },
+          "create_time": 1767261715.0,
+          "content": { "content_type": "execution_output", "text": "CREATE INDEX" },
+          "metadata": {}
+        }
+      },
+      "a3": {
+        "id": "a3",
+        "parent": "x1",
+        "children": [],
+        "message": {
+          "id": "a3",
+          "author": { "role": "assistant", "name": null, "metadata": {} },
+          "create_time": 1767261720.0,
+          "content": { "content_type": "text", "parts": ["Done. The query should now use the index."] },
+          "metadata": { "model_slug": "gpt-5" }
+        }
+      }
+    }
+  },
+  {
+    "title": "Trip ideas",
+    "create_time": 1767348000.0,
+    "update_time": 1767348100.0,
+    "id": "22222222-aaaa-4bbb-8ccc-000000000002",
+    "current_node": "b2",
+    "mapping": {
+      "b0": { "id": "b0", "message": null, "parent": null, "children": ["b1"] },
+      "b1": {
+        "id": "b1",
+        "parent": "b0",
+        "children": ["b2"],
+        "message": {
+          "id": "b1",
+          "author": { "role": "user", "name": null, "metadata": {} },
+          "create_time": 1767348000.0,
+          "content": { "content_type": "text", "parts": ["Suggest a weekend trip near Lisbon."] },
+          "metadata": {}
+        }
+      },
+      "b2": {
+        "id": "b2",
+        "parent": "b1",
+        "children": [],
+        "message": {
+          "id": "b2",
+          "author": { "role": "assistant", "name": null, "metadata": {} },
+          "create_time": 1767348050.0,
+          "content": { "content_type": "text", "parts": ["Sintra is forty minutes away by train."] },
+          "metadata": { "model_slug": "gpt-5-mini" }
+        }
+      }
+    }
+  },
+  { "title": "Broken record", "conversation_id": "33333333-aaaa-4bbb-8ccc-000000000003" },
+  {
+    "title": "No id",
+    "mapping": { "z0": { "id": "z0", "message": null, "parent": null, "children": [] } }
+  }
+]

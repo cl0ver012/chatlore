@@ -1,0 +1,58 @@
+[
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted And how long does the dough need to rest?",
+    "time": "2026-03-10T18:12:00.000Z",
+    "products": ["Gemini Apps"],
+    "safeHtmlItem": [{ "html": "<p>At least <b>24 hours</b> in the fridge.</p>" }]
+  },
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted Give me a recipe for Neapolitan pizza dough",
+    "time": "2026-03-10T18:00:00.000Z",
+    "products": ["Gemini Apps"],
+    "safeHtmlItem": [
+      {
+        "html": "<p>Here is a simple recipe:</p><ul><li>500 g flour</li><li>325 g water</li></ul><script>ignored()</script><p>Mix &amp; rest.</p>"
+      }
+    ]
+  },
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted What is the capital of Australia?",
+    "time": "2026-03-10T21:30:00.000Z",
+    "products": ["Gemini Apps"],
+    "safeHtmlItem": [{ "html": "<p>Canberra.</p>" }]
+  },
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted A question that got no stored response",
+    "time": "2026-03-10T21:40:00.000Z",
+    "products": ["Gemini Apps"]
+  },
+  {
+    "header": "Gemini Apps",
+    "title": "Gave feedback: Good response",
+    "time": "2026-03-10T21:41:00.000Z",
+    "products": ["Gemini Apps"]
+  },
+  {
+    "header": "Gemini-Apps",
+    "title": "Eingegebener Prompt: Wie spät ist es in Tokio?",
+    "time": "2026-03-12T08:00:00.000Z",
+    "products": ["Gemini Apps"],
+    "safeHtmlItem": [{ "html": "<p>Es ist 17 Uhr.</p>" }]
+  },
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted Entry with a broken time",
+    "time": "not a time",
+    "products": ["Gemini Apps"]
+  },
+  {
+    "header": "Search",
+    "title": "Searched for pizza",
+    "time": "2026-03-10T17:00:00.000Z",
+    "products": ["Search"]
+  }
+]
