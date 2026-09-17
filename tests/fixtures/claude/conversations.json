@@ -1,0 +1,92 @@
+[
+  {
+    "uuid": "aaaaaaaa-1111-4222-8333-000000000001",
+    "name": "Rust lifetimes",
+    "summary": "Explaining a borrow checker error.",
+    "created_at": "2026-02-01T09:00:00.000000Z",
+    "updated_at": "2026-02-01T09:10:00.000000Z",
+    "account": { "uuid": "acct-1" },
+    "chat_messages": [
+      {
+        "uuid": "m1",
+        "parent_message_uuid": "00000000-0000-4000-8000-000000000000",
+        "sender": "human",
+        "text": "Why does this not compile?",
+        "content": [{ "type": "text", "text": "Why does this not compile?" }],
+        "created_at": "2026-02-01T09:00:00.000000Z",
+        "updated_at": "2026-02-01T09:00:00.000000Z",
+        "attachments": [
+          {
+            "file_name": "main.rs",
+            "file_type": "text/x-rust",
+            "file_size": 42,
+            "extracted_content": "fn main() { let r; { let x = 5; r = &x; } }"
+          }
+        ],
+        "files": [{ "file_name": "screenshot.png" }]
+      },
+      {
+        "uuid": "m2",
+        "parent_message_uuid": "m1",
+        "sender": "assistant",
+        "text": "x does not live long enough.",
+        "content": [
+          { "type": "thinking", "thinking": "internal reasoning that must not be imported" },
+          { "type": "text", "text": "x does not live long enough." }
+        ],
+        "created_at": "2026-02-01T09:01:00.000000Z",
+        "updated_at": "2026-02-01T09:01:00.000000Z",
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "m3",
+        "parent_message_uuid": "m1",
+        "sender": "assistant",
+        "text": "",
+        "content": [
+          { "type": "text", "text": "Retried answer: move x out of the inner scope." },
+          { "type": "tool_use", "name": "repl", "input": { "code": "cargo check" } },
+          { "type": "tool_result", "content": [{ "type": "text", "text": "Finished dev profile" }] }
+        ],
+        "created_at": "2026-02-01T09:05:00.000000Z",
+        "updated_at": "2026-02-01T09:05:00.000000Z",
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "m4",
+        "parent_message_uuid": "m3",
+        "sender": "human",
+        "text": "That worked, thanks.",
+        "content": [{ "type": "text", "text": "That worked, thanks." }],
+        "created_at": "2026-02-01T09:10:00.000000Z",
+        "updated_at": "2026-02-01T09:10:00.000000Z",
+        "attachments": [],
+        "files": []
+      }
+    ]
+  },
+  {
+    "uuid": "aaaaaaaa-1111-4222-8333-000000000002",
+    "name": "Old style export",
+    "created_at": "2025-06-01T12:00:00.000000Z",
+    "updated_at": "2025-06-01T12:01:00.000000Z",
+    "chat_messages": [
+      {
+        "uuid": "o1",
+        "sender": "human",
+        "text": "Give me a name for a cat.",
+        "created_at": "2025-06-01T12:00:00.000000Z"
+      },
+      {
+        "uuid": "o2",
+        "sender": "assistant",
+        "text": "Biscuit.",
+        "created_at": "2025-06-01T12:01:00.000000Z"
+      },
+      { "uuid": "o3", "sender": "assistant", "text": "   ", "created_at": "2025-06-01T12:02:00.000000Z" }
+    ]
+  },
+  { "uuid": "aaaaaaaa-1111-4222-8333-000000000003", "name": "Broken record" }
+]

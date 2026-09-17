@@ -6,9 +6,23 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
-**Status: pre-alpha.** This repository currently holds the project skeleton.
-Nothing is usable yet beyond `chatlore --help`. The roadmap below shows what is
-coming and in which order.
+**Status: pre-alpha.** Importing works today: ChatGPT, Claude, Gemini, and
+Markdown exports land in a local library of plain JSON files. Search, the graph,
+and chat are next. The roadmap below shows the order.
+
+## Try it
+
+```bash
+git clone https://github.com/cl0ver012/chatlore.git
+cd chatlore
+uv sync
+uv run chatlore import path/to/chatgpt-export.zip
+uv run chatlore stats
+```
+
+The source is detected from the file. Importing is idempotent, so re-running it
+after a fresh export only adds what changed. How to get each export, what is
+kept, and the known limits are in [docs/importers.md](docs/importers.md).
 
 ## What ChatLore will do
 
@@ -34,9 +48,9 @@ extraction is an optional enrichment you can re-run with a better model later.
 
 | Milestone | Deliverable | Status |
 |---|---|---|
-| M0 | Repository skeleton and CI | in progress |
-| M1 | Core data model and embedded SQLite graph store | planned |
-| M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | planned |
+| M0 | Repository skeleton and CI | done |
+| M1 | Core data model and embedded SQLite graph store | model done, store next |
+| M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
 | M3 | Chunking, embeddings, hybrid search | planned |
 | M4 | Entity, topic, and fact extraction with provenance | planned |
 | M5 | REST API with streaming chat | planned |
