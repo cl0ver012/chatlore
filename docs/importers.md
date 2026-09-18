@@ -49,11 +49,20 @@ the image files themselves are not imported yet.
 2. Wait for the email and download the zip.
 3. `chatlore import claude-export.zip`
 
+Newer exports arrive as a manifest plus several zips split by category
+(`conversations-000.zip`, `projects-000.zip`, and so on). Import the
+conversations zip; the others are not read yet.
+
 What is kept: every message, text extracted from attachments, tool calls and
-their results as text, and attachment names. Thinking blocks are dropped.
-Newer exports record retries and edits as branches. The export does not say
-which branch was on screen, so the branch ending in the newest message is
-marked as active. Older exports are imported as a simple sequence.
+their results as text, and attachment names. Thinking blocks and system-injected
+prompts are dropped, as are tool blocks the app hid from the chat. Newer exports
+record retries and edits as branches. The export does not say which branch was
+on screen, so the branch ending in the newest message is marked as active.
+Older exports are imported as a simple sequence.
+
+Expect a large share of skipped records. Real exports contain many conversations
+whose every message is empty, with no title, text, or content, sometimes only a
+file reference. They are reported once as `no readable messages` and skipped.
 
 ## Gemini
 

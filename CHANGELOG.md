@@ -32,3 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `chatlore search` for full-text search across every imported message, and
   `chatlore index --rebuild` to recreate the database from the library. `import` and
   `note` keep the database in step automatically.
+
+### Fixed
+
+- Claude exports with conversations whose every message is blank no longer abort with
+  `max() iterable argument is empty`; they are skipped and reported once. Found with a
+  real export, where 234 of 355 conversations were blank.
+- Claude `injected_prompt_block` content and tool blocks marked `hidden_in_chat` are no
+  longer imported; failed tool results are labelled as errors; messages that only shared
+  files are kept as `[files: ...]`.
+- Importing is much faster: one transaction per import, `synchronous=NORMAL` on disk, an
+  external-content FTS5 table keyed by row id instead of a full-index scan per delete, and
+  a library index so unchanged conversations are detected without opening their files.
+  A real 121-conversation export went from 39 s to under 5 s.
+- Skipped records are grouped by reason in the import summary.
