@@ -5,14 +5,21 @@
     "summary": "Explaining a borrow checker error.",
     "created_at": "2026-02-01T09:00:00.000000Z",
     "updated_at": "2026-02-01T09:10:00.000000Z",
-    "account": { "uuid": "acct-1" },
+    "account": {
+      "uuid": "acct-1"
+    },
     "chat_messages": [
       {
         "uuid": "m1",
         "parent_message_uuid": "00000000-0000-4000-8000-000000000000",
         "sender": "human",
         "text": "Why does this not compile?",
-        "content": [{ "type": "text", "text": "Why does this not compile?" }],
+        "content": [
+          {
+            "type": "text",
+            "text": "Why does this not compile?"
+          }
+        ],
         "created_at": "2026-02-01T09:00:00.000000Z",
         "updated_at": "2026-02-01T09:00:00.000000Z",
         "attachments": [
@@ -23,7 +30,11 @@
             "extracted_content": "fn main() { let r; { let x = 5; r = &x; } }"
           }
         ],
-        "files": [{ "file_name": "screenshot.png" }]
+        "files": [
+          {
+            "file_name": "screenshot.png"
+          }
+        ]
       },
       {
         "uuid": "m2",
@@ -31,8 +42,14 @@
         "sender": "assistant",
         "text": "x does not live long enough.",
         "content": [
-          { "type": "thinking", "thinking": "internal reasoning that must not be imported" },
-          { "type": "text", "text": "x does not live long enough." }
+          {
+            "type": "thinking",
+            "thinking": "internal reasoning that must not be imported"
+          },
+          {
+            "type": "text",
+            "text": "x does not live long enough."
+          }
         ],
         "created_at": "2026-02-01T09:01:00.000000Z",
         "updated_at": "2026-02-01T09:01:00.000000Z",
@@ -45,9 +62,47 @@
         "sender": "assistant",
         "text": "",
         "content": [
-          { "type": "text", "text": "Retried answer: move x out of the inner scope." },
-          { "type": "tool_use", "name": "repl", "input": { "code": "cargo check" } },
-          { "type": "tool_result", "content": [{ "type": "text", "text": "Finished dev profile" }] }
+          {
+            "type": "injected_prompt_block",
+            "prompt": "system text the user never saw",
+            "injection_source": "style"
+          },
+          {
+            "type": "text",
+            "text": "Retried answer: move x out of the inner scope."
+          },
+          {
+            "type": "tool_use",
+            "name": "repl",
+            "input": {
+              "code": "cargo check"
+            }
+          },
+          {
+            "type": "tool_result",
+            "content": [
+              {
+                "type": "text",
+                "text": "Finished dev profile"
+              }
+            ]
+          },
+          {
+            "type": "tool_use",
+            "name": "hidden_tool",
+            "input": {},
+            "hidden_in_chat": true
+          },
+          {
+            "type": "tool_result",
+            "content": [
+              {
+                "type": "text",
+                "text": "boom"
+              }
+            ],
+            "is_error": true
+          }
         ],
         "created_at": "2026-02-01T09:05:00.000000Z",
         "updated_at": "2026-02-01T09:05:00.000000Z",
@@ -59,7 +114,12 @@
         "parent_message_uuid": "m3",
         "sender": "human",
         "text": "That worked, thanks.",
-        "content": [{ "type": "text", "text": "That worked, thanks." }],
+        "content": [
+          {
+            "type": "text",
+            "text": "That worked, thanks."
+          }
+        ],
         "created_at": "2026-02-01T09:10:00.000000Z",
         "updated_at": "2026-02-01T09:10:00.000000Z",
         "attachments": [],
@@ -85,8 +145,103 @@
         "text": "Biscuit.",
         "created_at": "2025-06-01T12:01:00.000000Z"
       },
-      { "uuid": "o3", "sender": "assistant", "text": "   ", "created_at": "2025-06-01T12:02:00.000000Z" }
+      {
+        "uuid": "o3",
+        "sender": "assistant",
+        "text": "   ",
+        "created_at": "2025-06-01T12:02:00.000000Z"
+      }
     ]
   },
-  { "uuid": "aaaaaaaa-1111-4222-8333-000000000003", "name": "Broken record" }
+  {
+    "uuid": "aaaaaaaa-1111-4222-8333-000000000003",
+    "name": "Broken record"
+  },
+  {
+    "uuid": "aaaaaaaa-1111-4222-8333-000000000004",
+    "name": "",
+    "summary": "",
+    "created_at": "2026-08-01T00:00:00.000000Z",
+    "updated_at": "2026-08-01T00:00:00.000000Z",
+    "chat_messages": [
+      {
+        "uuid": "b1",
+        "parent_message_uuid": "00000000-0000-4000-8000-000000000000",
+        "sender": "human",
+        "text": "",
+        "content": [],
+        "created_at": "2026-08-01T00:00:00.000000Z",
+        "attachments": [],
+        "files": [
+          {
+            "file_uuid": "f1",
+            "file_name": "photo.png"
+          }
+        ]
+      },
+      {
+        "uuid": "b2",
+        "parent_message_uuid": "b1",
+        "sender": "assistant",
+        "text": "",
+        "content": [],
+        "created_at": "2026-08-01T00:00:01.000000Z",
+        "attachments": [],
+        "files": []
+      }
+    ]
+  },
+  {
+    "uuid": "aaaaaaaa-1111-4222-8333-000000000005",
+    "name": "File then question",
+    "created_at": "2026-08-02T00:00:00.000000Z",
+    "updated_at": "2026-08-02T00:00:00.000000Z",
+    "chat_messages": [
+      {
+        "uuid": "c1",
+        "parent_message_uuid": "00000000-0000-4000-8000-000000000000",
+        "sender": "human",
+        "text": "",
+        "content": [],
+        "created_at": "2026-08-02T00:00:00.000000Z",
+        "attachments": [],
+        "files": [
+          {
+            "file_uuid": "f2",
+            "file_name": "report.pdf"
+          }
+        ]
+      },
+      {
+        "uuid": "c2",
+        "parent_message_uuid": "c1",
+        "sender": "human",
+        "text": "Summarise it",
+        "content": [
+          {
+            "type": "text",
+            "text": "Summarise it"
+          }
+        ],
+        "created_at": "2026-08-02T00:00:05.000000Z",
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "c3",
+        "parent_message_uuid": "c2",
+        "sender": "assistant",
+        "text": "It says hello.",
+        "content": [
+          {
+            "type": "text",
+            "text": "It says hello."
+          }
+        ],
+        "created_at": "2026-08-02T00:00:09.000000Z",
+        "attachments": [],
+        "files": []
+      }
+    ]
+  }
 ]

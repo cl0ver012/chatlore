@@ -25,9 +25,14 @@ def export(fixtures: Path) -> Path:
 def test_parses_good_records_and_reports_bad_ones(export: Path) -> None:
     conversations, issues = _parse(export)
 
-    assert [c.title for c in conversations] == ["Rust lifetimes", "Old style export"]
+    assert [c.title for c in conversations] == [
+        "Rust lifetimes",
+        "Old style export",
+        "File then question",
+    ]
     assert [(i.record, i.reason) for i in issues] == [
-        ("conversation #2", "not a Claude conversation (no chat_messages)")
+        ("conversation #2", "not a Claude conversation (no chat_messages)"),
+        ("conversation #3", "no readable messages (2 blank)"),
     ]
 
 
@@ -68,7 +73,7 @@ def test_attachments_and_tool_blocks_are_kept_as_text(export: Path) -> None:
     assert "[attachment: main.rs]\nfn main()" in question.text
 
     kinds = [p.type for p in retried.content]
-    assert kinds == [PartType.TEXT, PartType.OTHER, PartType.OTHER]
+    assert kinds == [PartType.TEXT, PartType.OTHER, PartType.OTHER, PartType.OTHER]
     assert '[tool call: repl]\n{"code": "cargo check"}' in retried.text
     assert "[tool result]\nFinished dev profile" in retried.text
 
@@ -90,3 +95,29 @@ def test_rejects_unusable_exports(tmp_path: Path) -> None:
 
     with pytest.raises(ImporterError, match="should contain a list"):
         _parse(path)
+
+
+def test_blank_conversations_are_skipped_with_a_reason(export: Path) -> None:
+    conversations, issues = _parse(export)
+
+    assert "aaaaaaaa-1111-4222-8333-000000000004" not in {c.external_id for c in conversations}
+    assert ("conversation #3", "no readable messages (2 blank)") in [
+        (i.record, i.reason) for i in issues
+    ]
+
+
+def test_file_only_messages_survive_inside_real_conversations(export: Path) -> None:
+    conversation = next(c for c in _parse(export)[0] if c.title == "File then question")
+    first = conversation.linear_messages()[0]
+
+    assert len(conversation.messages) == 3
+    assert first.text == "[files: report.pdf]"
+    assert [a.name for a in first.attachments] == ["report.pdf"]
+
+
+def test_hidden_and_injected_blocks_are_dropped_and_errors_labelled(export: Path) -> None:
+    retried = _parse(export)[0][0].linear_messages()[1]
+
+    assert "never saw" not in retried.text
+    assert "hidden_tool" not in retried.text
+    assert "[tool error]\nboom" in retried.text
