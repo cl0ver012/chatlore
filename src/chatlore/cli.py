@@ -26,7 +26,8 @@ from chatlore.importers import (
 )
 from chatlore.library import AddOutcome, Library
 from chatlore.paths import default_home
-from chatlore.store import DATABASE_NAME, GraphStore, TextHit, open_store
+from chatlore.pipeline import sync_chunks
+from chatlore.store import DATABASE_NAME, GraphStore, Label, TextHit, open_store
 
 __all__ = ["app", "default_home", "display_path"]
 
@@ -213,6 +214,24 @@ def index(
 
 
 @app.command()
+def process() -> None:
+    """Split imported conversations into chunks for retrieval. Safe to run repeatedly."""
+    home = default_home()
+    with open_store(home) as store:
+        report = sync_chunks(store, Library(home))
+
+    table = Table(title="chunking", show_header=False)
+    table.add_column("key", style="bold")
+    table.add_column("value", justify="right")
+    table.add_row("conversations", str(report.conversations))
+    table.add_row("chunks added", str(report.added))
+    table.add_row("chunks removed", str(report.removed))
+    table.add_row("chunks unchanged", str(report.unchanged))
+    table.add_row("chunks total", str(report.total))
+    console.print(table)
+
+
+@app.command()
 def search(
     query: Annotated[str, typer.Argument(help="Words to look for. All of them must match.")],
     source: Annotated[
@@ -223,7 +242,7 @@ def search(
 ) -> None:
     """Full-text search over every imported message."""
     with open_store(default_home()) as store:
-        hits = store.search_text(query, limit=limit, sources=source)
+        hits = store.search_text(query, limit=limit, sources=source, labels=[Label.MESSAGE])
         if not hits:
             console.print("No matches. Is the library imported and indexed?")
             return
