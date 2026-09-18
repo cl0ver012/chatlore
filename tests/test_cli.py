@@ -55,3 +55,10 @@ def test_doctor_reports_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert result.exit_code == 0
     assert "python" in result.output
     assert "exists" in result.output
+
+
+def test_display_path_shortens_the_home_directory(tmp_path: Path) -> None:
+    from chatlore.cli import display_path
+
+    assert display_path(Path.home() / ".chatlore" / "x") == "~/.chatlore/x"
+    assert display_path(tmp_path) == str(tmp_path) or display_path(tmp_path).startswith("~/")
