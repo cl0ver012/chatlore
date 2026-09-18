@@ -244,3 +244,28 @@ def test_reimporting_a_conversation_keeps_unchanged_messages_in_place(store: Gra
     assert [n.id for _, n in store.neighbors(first.messages[0].id, [EdgeType.HAS_CHUNK])] == [
         "chunk_x"
     ]
+
+
+def test_embedding_bookkeeping(store: GraphStore) -> None:
+    store.upsert_nodes([Node("a", Label.CHUNK), Node("b", Label.CHUNK), Node("e", Label.ENTITY)])
+    assert [n.id for n in store.nodes_without_embedding(Label.CHUNK)] == ["a", "b"]
+    assert store.count_embeddings() == 0
+
+    store.set_embedding("a", [1.0, 0.0])
+
+    assert [n.id for n in store.nodes_without_embedding(Label.CHUNK)] == ["b"]
+    assert [n.id for n in store.nodes_without_embedding(Label.CHUNK, limit=0)] == []
+    assert store.count_embeddings() == 1
+
+    store.clear_embeddings()
+
+    assert store.count_embeddings() == 0
+    assert [n.id for n in store.nodes_without_embedding(Label.CHUNK)] == ["a", "b"]
+    store.set_embedding("a", [1.0, 0.0, 0.0])  # a new dimension is accepted after clearing
+
+
+def test_meta_round_trips(store: GraphStore) -> None:
+    assert store.get_meta("missing") is None
+    store.set_meta("embedding_model", "model-a")
+    store.set_meta("embedding_model", "model-b")
+    assert store.get_meta("embedding_model") == "model-b"

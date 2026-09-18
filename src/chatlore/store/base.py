@@ -204,6 +204,26 @@ class GraphStore(ABC):
         """Attach an embedding to a node. All embeddings share one dimension."""
 
     @abstractmethod
+    def nodes_without_embedding(self, label: str, limit: int = 100) -> list[Node]:
+        """Return up to ``limit`` nodes of ``label`` that have no embedding yet."""
+
+    @abstractmethod
+    def count_embeddings(self) -> int:
+        """Return how many nodes have an embedding."""
+
+    @abstractmethod
+    def clear_embeddings(self) -> None:
+        """Drop every embedding, for example before switching to another model."""
+
+    @abstractmethod
+    def get_meta(self, key: str) -> str | None:
+        """Read a small piece of store-wide state, such as the embedding model name."""
+
+    @abstractmethod
+    def set_meta(self, key: str, value: str) -> None:
+        """Write a small piece of store-wide state."""
+
+    @abstractmethod
     def search_vector(
         self, embedding: Sequence[float], limit: int = 20, labels: Sequence[str] | None = None
     ) -> list[VectorHit]:
