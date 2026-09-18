@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `chatlore search` for full-text search across every imported message, and
   `chatlore index --rebuild` to recreate the database from the library. `import` and
   `note` keep the database in step automatically.
+- Chunking (`chatlore.chunking`): messages are split into retrieval-sized chunks of whole
+  paragraphs and whole code blocks with a short prose overlap. Tool output and other machine
+  text is deliberately not chunked.
+- `chatlore process` keeps chunks in the graph in step with the library and only touches
+  what changed, so embeddings on unchanged text survive a re-import.
+- `GraphStore.find_nodes(label, where)` for property lookups.
+- CLI output shows paths relative to the home directory.
+
+### Changed
+
+- Re-importing a conversation updates the messages that are still present in place instead
+  of deleting and re-inserting them, so their chunks and embeddings are kept.
 
 ### Fixed
 
