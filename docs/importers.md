@@ -13,7 +13,22 @@ export and only new or changed conversations are written.
 
 Everything lands in `~/.chatlore/conversations/<source>/<id>.json` (override
 the location with `CHATLORE_HOME`). The files are plain JSON and stay readable
-without ChatLore.
+without ChatLore. The same import also updates `~/.chatlore/chatlore.db`, a
+SQLite database holding the graph and the search indexes.
+
+## Searching
+
+```bash
+chatlore search "postgres index"          # every word must match, any order
+chatlore search "cat" --source claude     # limit to one source, repeatable
+chatlore search "cat" --limit 25
+chatlore index --rebuild                  # rebuild the database from the library
+```
+
+Search is full-text for now, with accents and punctuation ignored. Semantic
+search over embeddings and graph-based expansion arrive in the next milestones.
+The library is the source of truth: if the database is ever deleted or an
+upgrade changes its layout, `chatlore index --rebuild` recreates it.
 
 ## ChatGPT
 

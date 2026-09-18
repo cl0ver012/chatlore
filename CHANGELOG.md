@@ -25,3 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `chatlore stats`.
 - An on-disk library of plain JSON files with idempotent, hash-based imports.
 - Importer guide in `docs/importers.md`.
+- Graph store interface (`chatlore.store.GraphStore`) with a SQLite backend: nodes and
+  edges in tables, full-text search through FTS5, vector search through sqlite-vec, and
+  conversations mapped to the graph and back. The same contract tests will run against
+  the FalkorDB backend later.
+- `chatlore search` for full-text search across every imported message, and
+  `chatlore index --rebuild` to recreate the database from the library. `import` and
+  `note` keep the database in step automatically.
