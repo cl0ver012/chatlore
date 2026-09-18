@@ -7,7 +7,7 @@ such as embeddings are never recomputed without a reason.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from chatlore.chunking import (
@@ -15,6 +15,7 @@ from chatlore.chunking import (
     DEFAULT_OVERLAP_TOKENS,
     chunk_conversation,
 )
+from chatlore.embeddings import Embedder, EmbeddingCache, normalise, text_hash
 from chatlore.models import Conversation
 from chatlore.store import GraphStore, Label
 from chatlore.store.mapping import chunks_to_graph
@@ -70,3 +71,71 @@ def sync_chunks(
             report.added += len(fresh)
             report.unchanged += len(wanted) - len(fresh)
     return report
+
+
+EMBEDDING_MODEL_KEY = "embedding_model"
+
+
+class EmbeddingModelMismatchError(Exception):
+    """The store holds vectors from another model; mixing them would corrupt search."""
+
+
+@dataclass(slots=True)
+class EmbedReport:
+    """What an embedding run did."""
+
+    embedded: int = 0
+    from_cache: int = 0
+    already_done: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.embedded + self.from_cache + self.already_done
+
+
+def sync_embeddings(
+    store: GraphStore,
+    embedder: Embedder,
+    cache: EmbeddingCache | None = None,
+    batch_size: int = 32,
+    on_progress: Callable[[int], None] | None = None,
+) -> EmbedReport:
+    """Give every chunk that lacks one an embedding. Safe to interrupt and resume.
+
+    Each batch is committed on its own, so stopping halfway keeps the work done
+    so far. Vectors are normalised to unit length before they are stored.
+    """
+    stored_model = store.get_meta(EMBEDDING_MODEL_KEY)
+    if stored_model is not None and stored_model != embedder.name:
+        raise EmbeddingModelMismatchError(
+            f"the database was embedded with '{stored_model}' but '{embedder.name}' is configured"
+        )
+
+    report = EmbedReport(already_done=store.count_embeddings())
+    while True:
+        batch = store.nodes_without_embedding(Label.CHUNK, limit=batch_size)
+        if not batch:
+            return report
+
+        hashes = {node.id: text_hash(str(node.props.get("text", ""))) for node in batch}
+        known = cache.get_many(embedder.name, list(hashes.values())) if cache is not None else {}
+        missing = [node for node in batch if hashes[node.id] not in known]
+        if missing:
+            vectors = embedder.embed_passages([str(node.props.get("text", "")) for node in missing])
+            fresh = {
+                hashes[node.id]: normalise(vector)
+                for node, vector in zip(missing, vectors, strict=True)
+            }
+            if cache is not None:
+                cache.put_many(embedder.name, fresh)
+            known.update(fresh)
+
+        with store.transaction():
+            for node in batch:
+                store.set_embedding(node.id, known[hashes[node.id]])
+            store.set_meta(EMBEDDING_MODEL_KEY, embedder.name)
+
+        report.embedded += len(missing)
+        report.from_cache += len(batch) - len(missing)
+        if on_progress is not None:
+            on_progress(len(batch))

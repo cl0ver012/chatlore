@@ -30,6 +30,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+  "fastembed>=0.4",
   "pydantic>=2.9",
   "pyyaml>=6.0",
   "rich>=13.7",
@@ -95,7 +96,7 @@ pretty = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec"]
+module = ["sqlite_vec", "fastembed"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

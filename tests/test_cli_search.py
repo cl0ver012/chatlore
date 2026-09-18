@@ -10,8 +10,17 @@ from typer.testing import CliRunner
 
 from chatlore.cli import app
 from chatlore.store import open_store
+from tests.fakes import FakeEmbedder
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def embedder(monkeypatch: pytest.MonkeyPatch) -> FakeEmbedder:
+    """Replace the real model everywhere in the CLI so tests never download anything."""
+    fake = FakeEmbedder()
+    monkeypatch.setattr("chatlore.cli.make_embedder", lambda home: fake)
+    return fake
 
 
 @pytest.fixture
@@ -99,3 +108,80 @@ def test_search_does_not_return_a_message_twice_once_it_is_chunked(
     runner.invoke(app, ["process"])
 
     assert runner.invoke(app, ["search", "composite index"]).output == before
+
+
+def test_process_embeds_every_chunk_once(
+    home: Path, fixtures: Path, embedder: FakeEmbedder
+) -> None:
+    runner.invoke(app, ["import", str(fixtures / "chatgpt" / "conversations.json")])
+
+    first = runner.invoke(app, ["process"])
+    second = runner.invoke(app, ["process"])
+
+    assert first.exit_code == 0 and second.exit_code == 0
+    with open_store(home) as store:
+        chunks = store.count_nodes("Chunk")
+        assert store.count_embeddings() == chunks
+    assert _row(first.output, "embedded now") == chunks
+    assert _row(second.output, "embedded now") == 0
+    assert len(embedder.embedded) == chunks
+    assert (home / "cache" / "embeddings.db").exists()
+
+
+def test_no_embed_skips_the_model(home: Path, fixtures: Path, embedder: FakeEmbedder) -> None:
+    runner.invoke(app, ["import", str(fixtures / "claude")])
+
+    result = runner.invoke(app, ["process", "--no-embed"])
+
+    assert result.exit_code == 0
+    assert "embedded now" not in result.output
+    assert embedder.embedded == []
+
+
+def test_a_rebuilt_database_is_embedded_from_the_cache(
+    home: Path, fixtures: Path, embedder: FakeEmbedder
+) -> None:
+    runner.invoke(app, ["import", str(fixtures / "claude")])
+    runner.invoke(app, ["process"])
+    calls = len(embedder.embedded)
+
+    runner.invoke(app, ["index", "--rebuild"])
+    result = runner.invoke(app, ["process"])
+
+    assert _row(result.output, "embedded now") == 0
+    assert _row(result.output, "embeddings from cache") == calls
+    assert len(embedder.embedded) == calls
+
+
+def test_changing_the_model_needs_reembed(
+    home: Path, fixtures: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner.invoke(app, ["import", str(fixtures / "claude")])
+    runner.invoke(app, ["process"])
+    other = FakeEmbedder("another-model")
+    monkeypatch.setattr("chatlore.cli.make_embedder", lambda home: other)
+
+    refused = runner.invoke(app, ["process"])
+    forced = runner.invoke(app, ["process", "--reembed"])
+
+    assert refused.exit_code == 1
+    assert "--reembed" in refused.output
+    assert forced.exit_code == 0
+    with open_store(home) as store:
+        assert store.get_meta("embedding_model") == "another-model"
+        assert store.count_embeddings() == len(other.embedded) > 0
+
+
+def test_semantic_search_finds_by_shared_meaning(home: Path, fixtures: Path) -> None:
+    runner.invoke(app, ["import", str(fixtures / "chatgpt" / "conversations.json")])
+    before = runner.invoke(app, ["search", "weekend trip", "--semantic"])
+    runner.invoke(app, ["process"])
+
+    found = runner.invoke(app, ["search", "suggest a weekend trip", "--semantic", "--limit", "1"])
+    other_source = runner.invoke(app, ["search", "weekend trip", "--semantic", "-s", "claude"])
+
+    assert "Run `chatlore process` first" in before.output
+    assert found.exit_code == 0
+    assert "Trip ideas" in found.output
+    assert "similarity" in found.output
+    assert "No matches" in other_source.output

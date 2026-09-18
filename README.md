@@ -19,6 +19,8 @@ cd chatlore
 uv sync
 uv run chatlore import path/to/chatgpt-export.zip
 uv run chatlore search "postgres index"
+uv run chatlore process                                  # chunk and embed, local model
+uv run chatlore search "why was my query slow" --semantic
 uv run chatlore stats
 ```
 
@@ -53,7 +55,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M0 | Repository skeleton and CI | done |
 | M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
-| M3 | Chunking, embeddings, hybrid search | chunking done, embeddings next |
+| M3 | Chunking, embeddings, hybrid search | chunking and embeddings done, hybrid ranking next |
 | M4 | Entity, topic, and fact extraction with provenance | planned |
 | M5 | REST API with streaming chat | planned |
 | M6 | Web UI: conversations, graph explorer, chat | planned |

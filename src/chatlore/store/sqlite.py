@@ -341,6 +341,32 @@ class SQLiteStore(GraphStore):
                 (node_id, sqlite_vec.serialize_float32(vector)),
             )
 
+    def nodes_without_embedding(self, label: str, limit: int = 100) -> list[Node]:
+        missing = "" if self._dimension is None else "AND id NOT IN (SELECT node_id FROM node_vec) "
+        rows = self._connection.execute(
+            f"SELECT id, label, props FROM nodes WHERE label = ? {missing}ORDER BY id LIMIT ?",
+            (label, limit),
+        ).fetchall()
+        return [_node(row) for row in rows]
+
+    def count_embeddings(self) -> int:
+        if self._dimension is None:
+            return 0
+        return int(self._connection.execute("SELECT COUNT(*) FROM node_vec").fetchone()[0])
+
+    def clear_embeddings(self) -> None:
+        with self.transaction() as db:
+            db.execute("DROP TABLE IF EXISTS node_vec")
+            db.execute("DELETE FROM meta WHERE key IN ('embedding_dimension', 'embedding_model')")
+        self._dimension = None
+
+    def get_meta(self, key: str) -> str | None:
+        row = self._connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row is not None else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._set_meta(key, value)
+
     def search_vector(
         self, embedding: Sequence[float], limit: int = 20, labels: Sequence[str] | None = None
     ) -> list[VectorHit]:
