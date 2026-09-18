@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `chatlore process` keeps chunks in the graph in step with the library and only touches
   what changed, so embeddings on unchanged text survive a re-import.
 - `GraphStore.find_nodes(label, where)` for property lookups.
+- Local embeddings (`chatlore.embeddings`) through fastembed, with a disk cache keyed by
+  model and text hash so a rebuilt database costs no embedding time. `chatlore process`
+  embeds after chunking, resumes after an interruption, and refuses to mix two models;
+  `--no-embed` and `--reembed` control it.
+- `chatlore search --semantic` finds chunks by meaning and shows a similarity score.
+- Store interface: `nodes_without_embedding`, `count_embeddings`, `clear_embeddings`,
+  `get_meta`, `set_meta`.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

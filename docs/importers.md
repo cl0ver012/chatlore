@@ -20,6 +20,7 @@ SQLite database holding the graph and the search indexes.
 
 ```bash
 chatlore search "postgres index"          # every word must match, any order
+chatlore search "why was my query slow" --semantic   # match by meaning
 chatlore search "cat" --source claude     # limit to one source, repeatable
 chatlore search "cat" --limit 25
 chatlore index --rebuild                  # rebuild the database from the library
@@ -28,21 +29,34 @@ chatlore index --rebuild                  # rebuild the database from the librar
 ## Processing
 
 ```bash
-chatlore process        # split conversations into chunks; safe to run repeatedly
+chatlore process              # chunk, then embed; safe to repeat and to interrupt
+chatlore process --no-embed   # chunk only
+chatlore process --reembed    # drop all vectors first, needed after changing the model
 ```
 
-Processing prepares the library for semantic search. Each message is split into
-chunks of about 400 tokens made of whole paragraphs and whole code blocks, with a
-short overlap between prose chunks. Only what you and the assistant wrote is
-chunked. Tool output and attachment dumps are left out on purpose: they stay
-findable through full-text search, but embedding them would bury your actual
-conversations under scraped pages and JSON.
+Processing prepares the library for semantic search in two stages.
 
-Running it again only touches what changed, so work done on unchanged text, such
-as embeddings, is kept.
+**Chunking.** Each message is split into chunks of about 400 tokens made of whole
+paragraphs and whole code blocks, with a short overlap between prose chunks. Only
+what you and the assistant wrote is chunked. Tool output and attachment dumps are
+left out on purpose: they stay findable through full-text search, but embedding
+them would bury your actual conversations under scraped pages and JSON.
 
-Search is full-text for now, with accents and punctuation ignored. Semantic
-search over embeddings and graph-based expansion arrive in the next milestones.
+**Embedding.** Every chunk gets a vector from a small model that runs on your own
+machine (`BAAI/bge-small-en-v1.5` through fastembed, about 130 MB, downloaded once
+into `~/.chatlore/cache/models`). Nothing is sent anywhere. Expect a few chunks per
+second on a laptop CPU, so a couple of thousand chunks take several minutes the
+first time. Set `CHATLORE_EMBEDDING_MODEL` to use another fastembed model, then
+run `chatlore process --reembed`.
+
+Both stages only touch what changed. Vectors are also cached by text hash in
+`~/.chatlore/cache/embeddings.db`, so rebuilding the database with
+`chatlore index --rebuild` does not cost embedding time again.
+
+Plain search matches words, with accents and punctuation ignored. `--semantic`
+matches meaning instead, using the embeddings from `chatlore process`, and shows a
+similarity score per hit. A combined ranking that blends both with the graph is
+the next step.
 The library is the source of truth: if the database is ever deleted or an
 upgrade changes its layout, `chatlore index --rebuild` recreates it.
 
