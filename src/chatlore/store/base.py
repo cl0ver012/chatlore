@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal, Self
@@ -116,6 +117,10 @@ class GraphStore(ABC):
 
     def __enter__(self) -> Self:
         return self
+
+    @abstractmethod
+    def transaction(self) -> AbstractContextManager[Any]:
+        """Group many writes into one transaction. Nested calls join the outer one."""
 
     def __exit__(self, *exc_info: object) -> None:
         self.close()

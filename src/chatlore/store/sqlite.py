@@ -51,15 +51,29 @@ CREATE TABLE IF NOT EXISTS edges (
     PRIMARY KEY (src, type, dst)
 );
 CREATE INDEX IF NOT EXISTS edges_dst ON edges (dst, type);
+CREATE TABLE IF NOT EXISTS node_search (
+    id              INTEGER PRIMARY KEY,
+    node_id         TEXT NOT NULL UNIQUE REFERENCES nodes (id) ON DELETE CASCADE,
+    label           TEXT NOT NULL,
+    conversation_id TEXT,
+    source          TEXT,
+    title           TEXT NOT NULL,
+    text            TEXT NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS node_text USING fts5 (
-    node_id UNINDEXED,
-    label UNINDEXED,
-    conversation_id UNINDEXED,
-    source UNINDEXED,
     title,
     text,
+    content = 'node_search',
+    content_rowid = 'id',
     tokenize = 'unicode61 remove_diacritics 2'
 );
+CREATE TRIGGER IF NOT EXISTS node_search_ai AFTER INSERT ON node_search BEGIN
+    INSERT INTO node_text (rowid, title, text) VALUES (new.id, new.title, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS node_search_ad AFTER DELETE ON node_search BEGIN
+    INSERT INTO node_text (node_text, rowid, title, text)
+    VALUES ('delete', old.id, old.title, old.text);
+END;
 """
 
 _WORD = re.compile(r"\w+", re.UNICODE)
@@ -78,6 +92,9 @@ class SQLiteStore(GraphStore):
         self._connection.execute("PRAGMA foreign_keys = ON")
         if path != ":memory:":
             self._connection.execute("PRAGMA journal_mode = WAL")
+            # Durable against application crashes; only an OS crash or power loss
+            # in the same instant can lose the last transaction. Much faster on disk.
+            self._connection.execute("PRAGMA synchronous = NORMAL")
         self._connection.executescript(_SCHEMA)
         self._set_meta("schema_version", str(SCHEMA_VERSION))
         self._dimension = self._read_dimension()
@@ -88,18 +105,18 @@ class SQLiteStore(GraphStore):
     # -- nodes and edges -----------------------------------------------------
 
     def upsert_nodes(self, nodes: Iterable[Node]) -> None:
-        with self._transaction() as db:
+        with self.transaction() as db:
             for node in nodes:
                 db.execute(
                     "INSERT INTO nodes (id, label, props) VALUES (?, ?, ?) "
                     "ON CONFLICT (id) DO UPDATE SET label = excluded.label, props = excluded.props",
                     (node.id, node.label, _dumps(node.props)),
                 )
-                db.execute("DELETE FROM node_text WHERE node_id = ?", (node.id,))
+                db.execute("DELETE FROM node_search WHERE node_id = ?", (node.id,))
                 text = node.props.get("text")
                 if isinstance(text, str) and text.strip():
                     db.execute(
-                        "INSERT INTO node_text "
+                        "INSERT INTO node_search "
                         "(node_id, label, conversation_id, source, title, text) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
                         (
@@ -113,7 +130,7 @@ class SQLiteStore(GraphStore):
                     )
 
     def upsert_edges(self, edges: Iterable[Edge]) -> None:
-        with self._transaction() as db:
+        with self.transaction() as db:
             for edge in edges:
                 db.execute(
                     "INSERT INTO edges (src, type, dst, props) VALUES (?, ?, ?, ?) "
@@ -129,11 +146,12 @@ class SQLiteStore(GraphStore):
 
     def delete_nodes(self, node_ids: Iterable[str]) -> None:
         ids = list(node_ids)
-        with self._transaction() as db:
+        with self.transaction() as db:
             for node_id in ids:
-                db.execute("DELETE FROM node_text WHERE node_id = ?", (node_id,))
                 if self._dimension is not None:
                     db.execute("DELETE FROM node_vec WHERE node_id = ?", (node_id,))
+                # node_search rows and their FTS entries go with the node through
+                # the foreign key cascade and the delete trigger.
                 db.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
 
     def neighbors(
@@ -187,7 +205,7 @@ class SQLiteStore(GraphStore):
 
     def upsert_conversation(self, conversation: Conversation) -> None:
         nodes, edges = conversation_to_graph(conversation)
-        with self._transaction():
+        with self.transaction():
             self._delete_messages(conversation.id)
             self.upsert_nodes(nodes)
             self.upsert_edges(edges)
@@ -236,7 +254,7 @@ class SQLiteStore(GraphStore):
         return summaries
 
     def delete_conversation(self, conversation_id: str) -> None:
-        with self._transaction():
+        with self.transaction():
             self._delete_messages(conversation_id)
             self.delete_nodes([conversation_id])
 
@@ -255,18 +273,19 @@ class SQLiteStore(GraphStore):
         clauses = ["node_text MATCH ?"]
         params: list[Any] = [match]
         if sources:
-            clauses.append(f"source IN ({', '.join('?' for _ in sources)})")
+            clauses.append(f"s.source IN ({', '.join('?' for _ in sources)})")
             params.extend(sources)
         if labels:
-            clauses.append(f"label IN ({', '.join('?' for _ in labels)})")
+            clauses.append(f"s.label IN ({', '.join('?' for _ in labels)})")
             params.extend(labels)
         params.append(limit)
 
         rows = self._connection.execute(
-            "SELECT node_id, label, conversation_id, source, title, "
-            "snippet(node_text, 5, '[', ']', '...', 16) AS snippet, "
-            "bm25(node_text, 0, 0, 0, 0, 2.0, 1.0) AS rank "
-            f"FROM node_text WHERE {' AND '.join(clauses)} ORDER BY rank LIMIT ?",
+            "SELECT s.node_id, s.label, s.conversation_id, s.source, s.title, "
+            "snippet(node_text, 1, '[', ']', '...', 16) AS snippet, "
+            "bm25(node_text, 2.0, 1.0) AS rank "
+            "FROM node_text JOIN node_search s ON s.id = node_text.rowid "
+            f"WHERE {' AND '.join(clauses)} ORDER BY rank LIMIT ?",
             params,
         ).fetchall()
         return [
@@ -288,7 +307,7 @@ class SQLiteStore(GraphStore):
             raise ValueError("embedding is empty")
         if self.get_node(node_id) is None:
             raise KeyError(node_id)
-        with self._transaction() as db:
+        with self.transaction() as db:
             self._ensure_vector_table(len(vector))
             db.execute("DELETE FROM node_vec WHERE node_id = ?", (node_id,))
             db.execute(
@@ -323,7 +342,8 @@ class SQLiteStore(GraphStore):
     # -- internals -----------------------------------------------------------
 
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Group writes into one transaction. Nested calls join the outer one."""
         db = self._connection
         if db.in_transaction:
             yield db

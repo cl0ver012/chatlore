@@ -72,6 +72,7 @@ def _conversation(raw: dict[str, Any]) -> Conversation:
     kept: dict[str, Message] = {}
     parents: dict[str, str | None] = {}
     order: list[str] = []
+    blank = 0
     for item in raw["chat_messages"]:
         if not isinstance(item, dict):
             continue
@@ -80,9 +81,17 @@ def _conversation(raw: dict[str, Any]) -> Conversation:
             continue
         message = _message(conv_id, uuid, item)
         parents[uuid] = as_str(item.get("parent_message_uuid"))
-        if message is not None:
+        if message is None:
+            blank += 1
+        else:
             kept[uuid] = message
             order.append(uuid)
+
+    readable = any(part.type is not PartType.OTHER for u in order for part in kept[u].content)
+    if not readable:
+        # Exports contain conversations whose every message is empty: no text, no
+        # content blocks, at most a file reference. There is nothing to keep.
+        raise ValueError(f"no readable messages ({blank + len(order)} blank)")
 
     has_tree = any(parent is not None for parent in parents.values())
     previous: str | None = None
@@ -132,6 +141,10 @@ def _message(conv_id: str, uuid: str, item: dict[str, Any]) -> Message | None:
         if file_name:
             attachments.append(Attachment(name=file_name))
 
+    if not parts and attachments:
+        # A message that only shared files still records that the files were shared.
+        names = ", ".join(attachment.name for attachment in attachments)
+        parts = [ContentPart(type=PartType.OTHER, text=f"[files: {names}]")]
     if not parts:
         return None
     return Message(
@@ -147,6 +160,8 @@ def _blocks(content: Any) -> list[ContentPart]:
     parts: list[ContentPart] = []
     for block in _dicts(content):
         kind = str(block.get("type", ""))
+        if block.get("hidden_in_chat"):
+            continue
         if kind == "text":
             text = as_str(block.get("text"))
             if text and text.strip():
@@ -158,8 +173,10 @@ def _blocks(content: Any) -> list[ContentPart]:
         elif kind == "tool_result":
             text = _tool_result_text(block.get("content"))
             if text:
-                parts.append(ContentPart(type=PartType.OTHER, text=f"[tool result]\n{text}"))
-        # "thinking" blocks are internal reasoning, not part of the visible conversation.
+                label = "tool error" if block.get("is_error") else "tool result"
+                parts.append(ContentPart(type=PartType.OTHER, text=f"[{label}]\n{text}"))
+        # Skipped on purpose: "thinking" is internal reasoning, and
+        # "injected_prompt_block" is system text the user never wrote or saw.
     return parts
 
 

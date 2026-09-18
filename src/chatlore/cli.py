@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import sys
 from collections import Counter
 from collections.abc import Iterator
@@ -104,8 +105,7 @@ def import_(
     try:
         kind = detect_source(path) if source == "auto" else get_importer(source).kind
         importer = get_importer(kind.value)
-        library = Library(default_home())
-        with _store(dry_run) as store:
+        with Library(default_home()) as library, _store(dry_run) as store, _writes(store):
             for conversation in importer.parse(path, issues.append):
                 messages += len(conversation.messages)
                 if dry_run:
@@ -132,10 +132,7 @@ def import_(
     table.add_row("skipped records", str(len(issues)))
     console.print(table)
 
-    for issue in issues[:_MAX_ISSUES_SHOWN]:
-        console.print(f"  [yellow]skipped[/yellow] {issue.record}: {issue.reason}")
-    if len(issues) > _MAX_ISSUES_SHOWN:
-        console.print(f"  ... and {len(issues) - _MAX_ISSUES_SHOWN} more")
+    _print_issues(issues)
     if not dry_run:
         console.print(f"Library: {default_home()}")
 
@@ -151,7 +148,8 @@ def note(
     except ValueError as error:
         console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
-    Library(default_home()).add(conversation)
+    with Library(default_home()) as library:
+        library.add(conversation)
     with open_store(default_home()) as store:
         store.upsert_conversation(conversation)
     console.print(f"Saved note: {conversation.title}")
@@ -193,10 +191,14 @@ def index(
         for name in (DATABASE_NAME, f"{DATABASE_NAME}-wal", f"{DATABASE_NAME}-shm"):
             (home / name).unlink(missing_ok=True)
     count = 0
+    library = Library(home)
+    if rebuild:
+        library.rebuild_index()
     with open_store(home) as store:
-        for conversation in Library(home):
-            store.upsert_conversation(conversation)
-            count += 1
+        with store.transaction():
+            for conversation in library:
+                store.upsert_conversation(conversation)
+                count += 1
         total = store.count_nodes("Conversation")
     console.print(f"Indexed {count} conversations. Database holds {total}.")
 
@@ -220,10 +222,39 @@ def search(
             _print_hit(hit)
 
 
+def _print_issues(issues: list[ImportIssue]) -> None:
+    """List skipped records, grouping identical reasons so 200 blanks take one line."""
+    grouped: dict[str, list[str]] = {}
+    for issue in issues:
+        grouped.setdefault(_generic_reason(issue.reason), []).append(issue.record)
+    for reason, records in list(grouped.items())[:_MAX_ISSUES_SHOWN]:
+        if len(records) == 1:
+            console.print(f"  [yellow]skipped[/yellow] {escape(records[0])}: {escape(reason)}")
+        else:
+            console.print(f"  [yellow]skipped[/yellow] {len(records)} records: {escape(reason)}")
+    if len(grouped) > _MAX_ISSUES_SHOWN:
+        console.print(f"  ... and {len(grouped) - _MAX_ISSUES_SHOWN} more kinds of problem")
+
+
+def _generic_reason(reason: str) -> str:
+    """Replace numbers so reasons that differ only by a count group together."""
+    return re.sub(r"\d+", "N", reason)
+
+
 def _print_hit(hit: TextHit) -> None:
     title = escape(hit.title or "(untitled)")
     console.print(f"[bold]{title}[/bold]  [dim]{hit.source} | {hit.conversation_id}[/dim]")
     console.print(f"  {hit.snippet}", markup=False, highlight=False)
+
+
+@contextmanager
+def _writes(store: GraphStore | None) -> Iterator[None]:
+    """One transaction for a whole import; a no-op without a store."""
+    if store is None:
+        yield
+        return
+    with store.transaction():
+        yield
 
 
 @contextmanager

@@ -41,7 +41,7 @@ def test_importing_twice_changes_nothing(home: Path, fixtures: Path) -> None:
 
     assert result.exit_code == 0
     assert {p: p.read_text(encoding="utf-8") for p in home.rglob("*.json")} == files
-    assert Library(home).stats()["claude"].conversations == 2
+    assert Library(home).stats()["claude"].conversations == 3
 
 
 def test_dry_run_writes_nothing(home: Path, fixtures: Path) -> None:
