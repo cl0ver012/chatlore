@@ -74,3 +74,22 @@ def test_stats_count_per_source(tmp_path: Path) -> None:
         "claude": SourceStats(conversations=1, messages=1),
         "gemini": SourceStats(conversations=1, messages=1),
     }
+
+
+def test_index_makes_unchanged_checks_cheap_and_survives_loss(tmp_path: Path) -> None:
+    with Library(tmp_path) as library:
+        library.add(_conversation("x" * 200_000))
+    index = tmp_path / "conversations" / "index.json"
+    assert index.exists()
+
+    # A fresh instance answers from the index without opening the conversation file.
+    fresh = Library(tmp_path)
+    assert fresh.add(_conversation("x" * 200_000)) is AddOutcome.UNCHANGED
+    assert fresh.stats()["chatgpt"] == SourceStats(conversations=1, messages=1)
+
+    # Without the index the files are scanned and the index is written again.
+    index.unlink()
+    rebuilt = Library(tmp_path)
+    assert rebuilt.add(_conversation("x" * 200_000)) is AddOutcome.UNCHANGED
+    assert index.exists()
+    assert rebuilt.rebuild_index() == 1
