@@ -44,3 +44,12 @@ def conversation_id(source: str, external_id: str) -> str:
 def message_id(conversation: str, external_id: str) -> str:
     """Return the stable id of a message within ``conversation``."""
     return f"msg_{_short_digest(conversation, external_id)}"
+
+
+def chunk_id(message: str, order: int, text: str) -> str:
+    """Return the stable id of a chunk.
+
+    The text is part of the identity, so a chunk whose text changed gets a new
+    id and can never keep an embedding computed for the old text.
+    """
+    return f"chunk_{_short_digest(message, str(order), text)}"

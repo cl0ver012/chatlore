@@ -9,7 +9,7 @@ talks only to the interface, so SQLite and FalkorDB are interchangeable.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -154,6 +154,12 @@ class GraphStore(ABC):
         """Return edges touching ``node_id`` with the node at the other end."""
 
     @abstractmethod
+    def find_nodes(
+        self, label: str, where: Mapping[str, Any] | None = None, limit: int = 1_000_000
+    ) -> list[Node]:
+        """Return nodes of ``label`` whose props equal every entry of ``where``."""
+
+    @abstractmethod
     def count_nodes(self, label: str | None = None) -> int:
         """Return how many nodes exist, optionally of one label."""
 
@@ -161,7 +167,11 @@ class GraphStore(ABC):
 
     @abstractmethod
     def upsert_conversation(self, conversation: Conversation) -> None:
-        """Store a conversation and its messages, replacing any earlier version."""
+        """Store a conversation and its messages, replacing any earlier version.
+
+        Messages that are still present keep their chunks and embeddings. Messages
+        that disappeared are deleted together with their chunks.
+        """
 
     @abstractmethod
     def get_conversation(self, conversation_id: str) -> Conversation | None:

@@ -25,6 +25,22 @@ chatlore search "cat" --limit 25
 chatlore index --rebuild                  # rebuild the database from the library
 ```
 
+## Processing
+
+```bash
+chatlore process        # split conversations into chunks; safe to run repeatedly
+```
+
+Processing prepares the library for semantic search. Each message is split into
+chunks of about 400 tokens made of whole paragraphs and whole code blocks, with a
+short overlap between prose chunks. Only what you and the assistant wrote is
+chunked. Tool output and attachment dumps are left out on purpose: they stay
+findable through full-text search, but embedding them would bury your actual
+conversations under scraped pages and JSON.
+
+Running it again only touches what changed, so work done on unchanged text, such
+as embeddings, is kept.
+
 Search is full-text for now, with accents and punctuation ignored. Semantic
 search over embeddings and graph-based expansion arrive in the next milestones.
 The library is the source of truth: if the database is ever deleted or an

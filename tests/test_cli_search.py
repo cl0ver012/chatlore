@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -66,3 +67,35 @@ def test_search_on_an_empty_home(home: Path) -> None:
 
     assert result.exit_code == 0
     assert "No matches" in result.output
+
+
+def _row(output: str, name: str) -> int:
+    match = re.search(rf"{name}\s*\D\s*(\d+)", output)
+    assert match is not None, output
+    return int(match.group(1))
+
+
+def test_process_chunks_the_library_and_is_idempotent(home: Path, fixtures: Path) -> None:
+    runner.invoke(app, ["import", str(fixtures / "chatgpt" / "conversations.json")])
+
+    first = runner.invoke(app, ["process"])
+    second = runner.invoke(app, ["process"])
+
+    assert first.exit_code == 0 and second.exit_code == 0
+    with open_store(home) as store:
+        chunks = store.count_nodes("Chunk")
+    assert chunks > 0
+    assert _row(first.output, "chunks added") == chunks
+    assert _row(second.output, "chunks added") == 0
+    assert _row(second.output, "chunks unchanged") == chunks
+
+
+def test_search_does_not_return_a_message_twice_once_it_is_chunked(
+    home: Path, fixtures: Path
+) -> None:
+    runner.invoke(app, ["import", str(fixtures / "chatgpt" / "conversations.json")])
+    before = runner.invoke(app, ["search", "composite index"]).output
+
+    runner.invoke(app, ["process"])
+
+    assert runner.invoke(app, ["search", "composite index"]).output == before

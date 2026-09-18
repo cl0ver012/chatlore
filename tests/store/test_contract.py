@@ -208,3 +208,39 @@ def test_vector_dimension_is_fixed_after_first_write(store: GraphStore) -> None:
         store.set_embedding("x", [])
     with pytest.raises(KeyError):
         store.set_embedding("ghost", [1.0, 2.0])
+
+
+def test_find_nodes_filters_by_label_and_props(store: GraphStore) -> None:
+    store.upsert_nodes(
+        [
+            Node("c1", Label.CHUNK, {"conversation_id": "a", "order": 0}),
+            Node("c2", Label.CHUNK, {"conversation_id": "a", "order": 1}),
+            Node("c3", Label.CHUNK, {"conversation_id": "b", "order": 0}),
+            Node("e1", Label.ENTITY, {"conversation_id": "a"}),
+        ]
+    )
+
+    assert [n.id for n in store.find_nodes(Label.CHUNK)] == ["c1", "c2", "c3"]
+    assert [n.id for n in store.find_nodes(Label.CHUNK, {"conversation_id": "a"})] == ["c1", "c2"]
+    assert [n.id for n in store.find_nodes(Label.CHUNK, {"conversation_id": "a", "order": 1})] == [
+        "c2"
+    ]
+    assert store.find_nodes(Label.CHUNK, {"conversation_id": "zzz"}) == []
+    assert [n.id for n in store.find_nodes(Label.CHUNK, limit=1)] == ["c1"]
+    with pytest.raises(ValueError, match="invalid property name"):
+        store.find_nodes(Label.CHUNK, {"bad') OR 1=1 --": 1})
+
+
+def test_reimporting_a_conversation_keeps_unchanged_messages_in_place(store: GraphStore) -> None:
+    store.upsert_conversation(_conversation(texts=("one", "two")))
+    first = store.get_conversation("conv_1")
+    assert first is not None
+    store.upsert_nodes([Node("chunk_x", Label.CHUNK, {"conversation_id": "conv_1"})])
+    store.upsert_edges([Edge(first.messages[0].id, EdgeType.HAS_CHUNK, "chunk_x")])
+
+    store.upsert_conversation(_conversation(texts=("one", "two")))
+
+    assert store.get_node("chunk_x") is not None
+    assert [n.id for _, n in store.neighbors(first.messages[0].id, [EdgeType.HAS_CHUNK])] == [
+        "chunk_x"
+    ]

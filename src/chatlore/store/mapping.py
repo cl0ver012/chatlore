@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from chatlore.chunking import Chunk
 from chatlore.models import Conversation, Message
 from chatlore.store.base import Edge, EdgeType, Label, Node
 
@@ -68,6 +69,43 @@ def graph_to_conversation(conversation_node: Node, message_nodes: list[Node]) ->
     data: dict[str, Any] = dict(conversation_node.props["conversation"])
     data["messages"] = [message.model_dump(mode="json") for message in messages]
     return Conversation.model_validate(data)
+
+
+def chunks_to_graph(
+    conversation: Conversation, chunks: list[Chunk]
+) -> tuple[list[Node], list[Edge]]:
+    """Return the nodes and edges that attach ``chunks`` to their messages."""
+    by_id = {message.id: message for message in conversation.messages}
+    nodes: list[Node] = []
+    edges: list[Edge] = []
+    for chunk in chunks:
+        message = by_id[chunk.message_id]
+        nodes.append(
+            Node(
+                id=chunk.id,
+                label=Label.CHUNK,
+                props={
+                    "text": chunk.text,
+                    "conversation_id": conversation.id,
+                    "message_id": chunk.message_id,
+                    "source": conversation.source.value,
+                    "title": conversation.title,
+                    "role": message.role.value,
+                    "created_at": _iso(message.created_at),
+                    "order": chunk.order,
+                    "token_estimate": chunk.token_estimate,
+                },
+            )
+        )
+        edges.append(
+            Edge(
+                src=chunk.message_id,
+                type=EdgeType.HAS_CHUNK,
+                dst=chunk.id,
+                props={"order": chunk.order},
+            )
+        )
+    return nodes, edges
 
 
 def _iso(value: Any) -> str | None:

@@ -26,9 +26,10 @@ from chatlore.importers import (
 )
 from chatlore.library import AddOutcome, Library
 from chatlore.paths import default_home
-from chatlore.store import DATABASE_NAME, GraphStore, TextHit, open_store
+from chatlore.pipeline import sync_chunks
+from chatlore.store import DATABASE_NAME, GraphStore, Label, TextHit, open_store
 
-__all__ = ["app", "default_home"]
+__all__ = ["app", "default_home", "display_path"]
 
 _MAX_ISSUES_SHOWN = 10
 
@@ -39,6 +40,14 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def display_path(path: Path) -> str:
+    """Render a path with the home directory shortened to ``~``."""
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _version_callback(value: bool) -> None:
@@ -74,7 +83,7 @@ def doctor() -> None:
     table.add_column("value", overflow="fold")
     table.add_row("python", f"{platform.python_version()} ({sys.executable})")
     table.add_row("platform", platform.platform())
-    table.add_row("data dir", f"{home} ({state})")
+    table.add_row("data dir", f"{display_path(home)} ({state})")
     console.print(table)
 
 
@@ -134,7 +143,7 @@ def import_(
 
     _print_issues(issues)
     if not dry_run:
-        console.print(f"Library: {default_home()}")
+        console.print(f"Library: {display_path(default_home())}")
 
 
 @app.command()
@@ -163,7 +172,7 @@ def stats() -> None:
         console.print("The library is empty. Run `chatlore import <path>` to add an export.")
         return
 
-    table = Table(title=f"Library at {default_home()}")
+    table = Table(title="Library")
     table.add_column("source", style="bold")
     table.add_column("conversations", justify="right")
     table.add_column("messages", justify="right")
@@ -176,6 +185,7 @@ def stats() -> None:
         str(sum(t.messages for t in totals.values())),
     )
     console.print(table)
+    console.print(f"Library: {display_path(default_home())}")
 
 
 @app.command()
@@ -204,6 +214,24 @@ def index(
 
 
 @app.command()
+def process() -> None:
+    """Split imported conversations into chunks for retrieval. Safe to run repeatedly."""
+    home = default_home()
+    with open_store(home) as store:
+        report = sync_chunks(store, Library(home))
+
+    table = Table(title="chunking", show_header=False)
+    table.add_column("key", style="bold")
+    table.add_column("value", justify="right")
+    table.add_row("conversations", str(report.conversations))
+    table.add_row("chunks added", str(report.added))
+    table.add_row("chunks removed", str(report.removed))
+    table.add_row("chunks unchanged", str(report.unchanged))
+    table.add_row("chunks total", str(report.total))
+    console.print(table)
+
+
+@app.command()
 def search(
     query: Annotated[str, typer.Argument(help="Words to look for. All of them must match.")],
     source: Annotated[
@@ -214,7 +242,7 @@ def search(
 ) -> None:
     """Full-text search over every imported message."""
     with open_store(default_home()) as store:
-        hits = store.search_text(query, limit=limit, sources=source)
+        hits = store.search_text(query, limit=limit, sources=source, labels=[Label.MESSAGE])
         if not hits:
             console.print("No matches. Is the library imported and indexed?")
             return
