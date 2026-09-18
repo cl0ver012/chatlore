@@ -49,7 +49,7 @@ def test_index_rebuilds_from_the_library(home: Path, fixtures: Path) -> None:
     result = runner.invoke(app, ["index", "--rebuild"])
 
     assert result.exit_code == 0
-    assert "Indexed 5 conversations" in result.output
+    assert "Indexed 6 conversations" in result.output
     assert "[cat]" in runner.invoke(app, ["search", "cat name"]).output
 
 
