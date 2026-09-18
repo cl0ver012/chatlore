@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -77,6 +77,7 @@ END;
 """
 
 _WORD = re.compile(r"\w+", re.UNICODE)
+_PROP_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class SQLiteStore(GraphStore):
@@ -192,6 +193,22 @@ class SQLiteStore(GraphStore):
             for row in rows
         ]
 
+    def find_nodes(
+        self, label: str, where: Mapping[str, Any] | None = None, limit: int = 1_000_000
+    ) -> list[Node]:
+        clauses = ["label = ?"]
+        params: list[Any] = [label]
+        for key, value in (where or {}).items():
+            if not _PROP_NAME.fullmatch(key):
+                raise ValueError(f"invalid property name: {key!r}")
+            clauses.append(f"json_extract(props, '$.{key}') = ?")
+            params.append(value)
+        rows = self._connection.execute(
+            f"SELECT id, label, props FROM nodes WHERE {' AND '.join(clauses)} ORDER BY id LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+        return [_node(row) for row in rows]
+
     def count_nodes(self, label: str | None = None) -> int:
         if label is None:
             row = self._connection.execute("SELECT COUNT(*) FROM nodes").fetchone()
@@ -205,8 +222,17 @@ class SQLiteStore(GraphStore):
 
     def upsert_conversation(self, conversation: Conversation) -> None:
         nodes, edges = conversation_to_graph(conversation)
-        with self.transaction():
-            self._delete_messages(conversation.id)
+        keep = {message.id for message in conversation.messages}
+        with self.transaction() as db:
+            # Messages that are still present are updated in place, so the chunks and
+            # embeddings hanging off them survive a re-import. Only messages that
+            # disappeared are removed, together with their chunks.
+            self._delete_messages(conversation.id, keep=keep)
+            db.execute(
+                "DELETE FROM edges WHERE type = ? AND src IN "
+                "(SELECT dst FROM edges WHERE src = ? AND type = ?)",
+                (EdgeType.REPLIES_TO.value, conversation.id, EdgeType.HAS_MESSAGE.value),
+            )
             self.upsert_nodes(nodes)
             self.upsert_edges(edges)
 
@@ -356,12 +382,21 @@ class SQLiteStore(GraphStore):
             raise
         db.execute("COMMIT")
 
-    def _delete_messages(self, conversation_id: str) -> None:
+    def _delete_messages(self, conversation_id: str, keep: set[str] | None = None) -> None:
+        """Delete a conversation's messages, except ``keep``, along with their chunks."""
         rows = self._connection.execute(
             "SELECT dst FROM edges WHERE src = ? AND type = ?",
             (conversation_id, EdgeType.HAS_MESSAGE.value),
         ).fetchall()
-        self.delete_nodes(row["dst"] for row in rows)
+        doomed = [row["dst"] for row in rows if not keep or row["dst"] not in keep]
+        chunks: list[str] = []
+        for message_id in doomed:
+            chunk_rows = self._connection.execute(
+                "SELECT dst FROM edges WHERE src = ? AND type = ?",
+                (message_id, EdgeType.HAS_CHUNK.value),
+            ).fetchall()
+            chunks.extend(row["dst"] for row in chunk_rows)
+        self.delete_nodes([*chunks, *doomed])
 
     def _ensure_vector_table(self, dimension: int) -> None:
         if self._dimension is None:
