@@ -57,16 +57,14 @@ def test_normalise_gives_unit_length_and_survives_zero() -> None:
 
 def test_cache_round_trips_per_model(tmp_path: Path) -> None:
     path = tmp_path / "cache" / "embeddings.db"
-    cache = EmbeddingCache(path)
-    cache.put_many("model-a", {text_hash("hello"): [0.25, 0.5]})
-    cache.close()
+    with EmbeddingCache(path) as cache:
+        cache.put_many("model-a", {text_hash("hello"): [0.25, 0.5]})
 
-    reopened = EmbeddingCache(path)
-    assert reopened.get_many("model-a", [text_hash("hello"), text_hash("other")]) == {
-        text_hash("hello"): [0.25, 0.5]
-    }
-    assert reopened.get_many("model-b", [text_hash("hello")]) == {}
-    reopened.close()
+    with EmbeddingCache(path) as reopened:
+        assert reopened.get_many("model-a", [text_hash("hello"), text_hash("other")]) == {
+            text_hash("hello"): [0.25, 0.5]
+        }
+        assert reopened.get_many("model-b", [text_hash("hello")]) == {}
 
 
 def test_every_chunk_gets_a_normalised_embedding(store: GraphStore) -> None:
@@ -112,20 +110,17 @@ def test_only_new_chunks_are_embedded_after_an_edit(store: GraphStore) -> None:
 
 
 def test_cache_makes_a_rebuilt_database_free(store: GraphStore) -> None:
-    cache = EmbeddingCache()
-    first = FakeEmbedder()
-    _load(store, _conversation("alpha", "beta"))
-    sync_embeddings(store, first, cache)
-
-    rebuilt = SQLiteStore(":memory:")
-    _load(rebuilt, _conversation("alpha", "beta"))
     second = FakeEmbedder()
-    report = sync_embeddings(rebuilt, second, cache)
+    with EmbeddingCache() as cache, SQLiteStore(":memory:") as rebuilt:
+        _load(store, _conversation("alpha", "beta"))
+        sync_embeddings(store, FakeEmbedder(), cache)
 
-    assert (report.embedded, report.from_cache) == (0, 2)
-    assert second.embedded == []
-    assert rebuilt.count_embeddings() == 2
-    rebuilt.close()
+        _load(rebuilt, _conversation("alpha", "beta"))
+        report = sync_embeddings(rebuilt, second, cache)
+
+        assert (report.embedded, report.from_cache) == (0, 2)
+        assert second.embedded == []
+        assert rebuilt.count_embeddings() == 2
 
 
 def test_switching_models_is_refused_until_embeddings_are_cleared(store: GraphStore) -> None:

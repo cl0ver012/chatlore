@@ -17,7 +17,7 @@ import sqlite3
 from array import array
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 MODEL_ENV = "CHATLORE_EMBEDDING_MODEL"
@@ -112,6 +112,12 @@ class EmbeddingCache:
 
     def close(self) -> None:
         self._connection.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
     def get_many(self, model: str, hashes: Sequence[str]) -> dict[str, list[float]]:
         found: dict[str, list[float]] = {}

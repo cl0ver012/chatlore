@@ -244,10 +244,12 @@ def process(
             if reembed:
                 store.clear_embeddings()
             embedder = make_embedder(home)
-            cache = EmbeddingCache(home / "cache" / "embeddings.db")
             pending = chunks.total - store.count_embeddings()
             try:
-                with _progress() as progress:
+                with (
+                    EmbeddingCache(home / "cache" / "embeddings.db") as cache,
+                    _progress() as progress,
+                ):
                     task = progress.add_task(f"Embedding with {embedder.name}", total=pending)
                     report = sync_embeddings(
                         store, embedder, cache, on_progress=lambda n: progress.advance(task, n)
@@ -258,8 +260,6 @@ def process(
             except EmbeddingError as error:
                 console.print(f"[red]{error}[/red]")
                 raise typer.Exit(code=1) from error
-            finally:
-                cache.close()
             table.add_row("embedded now", str(report.embedded))
             table.add_row("embeddings from cache", str(report.from_cache))
             table.add_row("embeddings total", str(report.total))
