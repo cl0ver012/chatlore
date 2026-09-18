@@ -27,7 +27,7 @@ from chatlore.library import AddOutcome, Library
 from chatlore.paths import default_home
 from chatlore.store import DATABASE_NAME, GraphStore, TextHit, open_store
 
-__all__ = ["app", "default_home"]
+__all__ = ["app", "default_home", "display_path"]
 
 _MAX_ISSUES_SHOWN = 10
 
@@ -38,6 +38,14 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def display_path(path: Path) -> str:
+    """Render a path with the home directory shortened to ``~``."""
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _version_callback(value: bool) -> None:
@@ -73,7 +81,7 @@ def doctor() -> None:
     table.add_column("value", overflow="fold")
     table.add_row("python", f"{platform.python_version()} ({sys.executable})")
     table.add_row("platform", platform.platform())
-    table.add_row("data dir", f"{home} ({state})")
+    table.add_row("data dir", f"{display_path(home)} ({state})")
     console.print(table)
 
 
@@ -137,7 +145,7 @@ def import_(
     if len(issues) > _MAX_ISSUES_SHOWN:
         console.print(f"  ... and {len(issues) - _MAX_ISSUES_SHOWN} more")
     if not dry_run:
-        console.print(f"Library: {default_home()}")
+        console.print(f"Library: {display_path(default_home())}")
 
 
 @app.command()
@@ -165,7 +173,7 @@ def stats() -> None:
         console.print("The library is empty. Run `chatlore import <path>` to add an export.")
         return
 
-    table = Table(title=f"Library at {default_home()}")
+    table = Table(title="Library")
     table.add_column("source", style="bold")
     table.add_column("conversations", justify="right")
     table.add_column("messages", justify="right")
@@ -178,6 +186,7 @@ def stats() -> None:
         str(sum(t.messages for t in totals.values())),
     )
     console.print(table)
+    console.print(f"Library: {display_path(default_home())}")
 
 
 @app.command()
