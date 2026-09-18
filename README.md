@@ -6,8 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
-**Status: pre-alpha.** Importing works today: ChatGPT, Claude, Gemini, and
-Markdown exports land in a local library of plain JSON files. Search, the graph,
+**Status: pre-alpha.** Importing and full-text search work today: ChatGPT,
+Claude, Gemini, and Markdown exports land in a local library and a SQLite graph
+store you can search from the terminal. Semantic search, the knowledge graph,
 and chat are next. The roadmap below shows the order.
 
 ## Try it
@@ -17,6 +18,7 @@ git clone https://github.com/cl0ver012/chatlore.git
 cd chatlore
 uv sync
 uv run chatlore import path/to/chatgpt-export.zip
+uv run chatlore search "postgres index"
 uv run chatlore stats
 ```
 
@@ -49,7 +51,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | Milestone | Deliverable | Status |
 |---|---|---|
 | M0 | Repository skeleton and CI | done |
-| M1 | Core data model and embedded SQLite graph store | model done, store next |
+| M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
 | M3 | Chunking, embeddings, hybrid search | planned |
 | M4 | Entity, topic, and fact extraction with provenance | planned |

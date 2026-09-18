@@ -5,11 +5,14 @@ from __future__ import annotations
 import platform
 import sys
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from chatlore import __version__
@@ -22,6 +25,7 @@ from chatlore.importers import (
 )
 from chatlore.library import AddOutcome, Library
 from chatlore.paths import default_home
+from chatlore.store import DATABASE_NAME, GraphStore, TextHit, open_store
 
 __all__ = ["app", "default_home"]
 
@@ -101,12 +105,16 @@ def import_(
         kind = detect_source(path) if source == "auto" else get_importer(source).kind
         importer = get_importer(kind.value)
         library = Library(default_home())
-        for conversation in importer.parse(path, issues.append):
-            messages += len(conversation.messages)
-            if dry_run:
-                outcomes["parsed"] += 1
-            else:
-                outcomes[library.add(conversation).value] += 1
+        with _store(dry_run) as store:
+            for conversation in importer.parse(path, issues.append):
+                messages += len(conversation.messages)
+                if dry_run:
+                    outcomes["parsed"] += 1
+                    continue
+                outcome = library.add(conversation)
+                outcomes[outcome.value] += 1
+                if outcome is not AddOutcome.UNCHANGED and store is not None:
+                    store.upsert_conversation(conversation)
     except ImporterError as error:
         console.print(f"[red]Import failed:[/red] {error}")
         raise typer.Exit(code=1) from error
@@ -144,6 +152,8 @@ def note(
         console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
     Library(default_home()).add(conversation)
+    with open_store(default_home()) as store:
+        store.upsert_conversation(conversation)
     console.print(f"Saved note: {conversation.title}")
 
 
@@ -168,3 +178,58 @@ def stats() -> None:
         str(sum(t.messages for t in totals.values())),
     )
     console.print(table)
+
+
+@app.command()
+def index(
+    rebuild: Annotated[
+        bool,
+        typer.Option("--rebuild", help="Drop the database and rebuild it from the library."),
+    ] = False,
+) -> None:
+    """Bring the search database in line with the library."""
+    home = default_home()
+    if rebuild:
+        for name in (DATABASE_NAME, f"{DATABASE_NAME}-wal", f"{DATABASE_NAME}-shm"):
+            (home / name).unlink(missing_ok=True)
+    count = 0
+    with open_store(home) as store:
+        for conversation in Library(home):
+            store.upsert_conversation(conversation)
+            count += 1
+        total = store.count_nodes("Conversation")
+    console.print(f"Indexed {count} conversations. Database holds {total}.")
+
+
+@app.command()
+def search(
+    query: Annotated[str, typer.Argument(help="Words to look for. All of them must match.")],
+    source: Annotated[
+        list[str] | None,
+        typer.Option("--source", "-s", help="Limit to a source. Repeatable."),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="How many results.")] = 10,
+) -> None:
+    """Full-text search over every imported message."""
+    with open_store(default_home()) as store:
+        hits = store.search_text(query, limit=limit, sources=source)
+        if not hits:
+            console.print("No matches. Is the library imported and indexed?")
+            return
+        for hit in hits:
+            _print_hit(hit)
+
+
+def _print_hit(hit: TextHit) -> None:
+    title = escape(hit.title or "(untitled)")
+    console.print(f"[bold]{title}[/bold]  [dim]{hit.source} | {hit.conversation_id}[/dim]")
+    console.print(f"  {hit.snippet}", markup=False, highlight=False)
+
+
+@contextmanager
+def _store(dry_run: bool) -> Iterator[GraphStore | None]:
+    if dry_run:
+        yield None
+        return
+    with open_store(default_home()) as store:
+        yield store
