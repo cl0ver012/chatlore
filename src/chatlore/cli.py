@@ -298,10 +298,19 @@ def search(
             return
         hits = store.search_text(query, limit=limit, sources=source, labels=[Label.MESSAGE])
         if not hits:
-            console.print("No matches. Is the library imported and indexed?")
+            console.print(_no_matches_hint(store))
             return
         for hit in hits:
             _print_hit(hit)
+
+
+def _no_matches_hint(store: GraphStore) -> str:
+    """Say why a word search came back empty, and what to try next."""
+    if store.count_nodes(Label.CONVERSATION) == 0:
+        return "Nothing is imported yet. Run `chatlore import <path>` first."
+    if store.count_embeddings() > 0:
+        return "No matches for those words. Try --semantic to search by meaning."
+    return "No matches for those words."
 
 
 def _semantic_search(

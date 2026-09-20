@@ -60,7 +60,12 @@ class FastEmbedEmbedder:
                 from fastembed import TextEmbedding  # heavy, so loaded on first use
 
                 cache = str(self._cache_dir) if self._cache_dir is not None else None
-                self._model = TextEmbedding(self.name, cache_dir=cache)
+                try:
+                    # Once the model is on disk, load it without asking the hub anything:
+                    # faster, silent, and it keeps search working offline.
+                    self._model = TextEmbedding(self.name, cache_dir=cache, local_files_only=True)
+                except Exception:
+                    self._model = TextEmbedding(self.name, cache_dir=cache)
             except Exception as error:
                 raise EmbeddingError(
                     f"could not load embedding model '{self.name}': {error}"

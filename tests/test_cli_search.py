@@ -71,11 +71,18 @@ def test_note_is_searchable_immediately(home: Path) -> None:
     assert "Ask Sam" in result.output
 
 
-def test_search_on_an_empty_home(home: Path) -> None:
-    result = runner.invoke(app, ["search", "anything"])
+def test_empty_word_search_says_why_and_what_to_try(home: Path, fixtures: Path) -> None:
+    nothing_imported = runner.invoke(app, ["search", "anything"])
+    runner.invoke(app, ["import", str(fixtures / "claude")])
+    no_embeddings = runner.invoke(app, ["search", "zzzzqqq"])
+    runner.invoke(app, ["process"])
+    with_embeddings = runner.invoke(app, ["search", "zzzzqqq"])
 
-    assert result.exit_code == 0
-    assert "No matches" in result.output
+    assert nothing_imported.exit_code == 0
+    assert "Nothing is imported yet" in nothing_imported.output
+    assert "No matches for those words." in no_embeddings.output
+    assert "--semantic" not in no_embeddings.output
+    assert "Try --semantic" in with_embeddings.output
 
 
 def _row(output: str, name: str) -> int:
