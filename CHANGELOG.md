@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An empty word search now says what is going on: nothing imported yet, no matches, or no
+  matches with a pointer to `--semantic` when embeddings exist. It used to ask whether the
+  library was imported, which read like an error.
+- The embedding model is loaded from disk without contacting the Hugging Face hub once it
+  has been downloaded. Semantic search starts faster, prints no download progress, and
+  works offline.
 - Re-importing a conversation updates the messages that are still present in place instead
   of deleting and re-inserting them, so their chunks and embeddings are kept.
 
