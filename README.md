@@ -6,10 +6,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
-**Status: pre-alpha.** Importing and full-text search work today: ChatGPT,
-Claude, Gemini, and Markdown exports land in a local library and a SQLite graph
-store you can search from the terminal. Semantic search, the knowledge graph,
-and chat are next. The roadmap below shows the order.
+**Status: pre-alpha.** Importing and search work today: ChatGPT, Claude, Gemini,
+and Markdown exports land in a local library and a SQLite graph store you can
+search from the terminal by words, by meaning, or both. The knowledge graph and
+chat are next. The roadmap below shows the order.
 
 ## Try it
 
@@ -21,6 +21,7 @@ uv run chatlore import path/to/chatgpt-export.zip
 uv run chatlore search "postgres index"
 uv run chatlore process                                  # chunk and embed, local model
 uv run chatlore search "why was my query slow" --semantic
+uv run chatlore search "slow postgres query" --hybrid     # words and meaning together
 uv run chatlore stats
 ```
 
@@ -55,7 +56,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M0 | Repository skeleton and CI | done |
 | M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
-| M3 | Chunking, embeddings, hybrid search | chunking and embeddings done, hybrid ranking next |
+| M3 | Chunking, embeddings, hybrid search | done |
 | M4 | Entity, topic, and fact extraction with provenance | planned |
 | M5 | REST API with streaming chat | planned |
 | M6 | Web UI: conversations, graph explorer, chat | planned |

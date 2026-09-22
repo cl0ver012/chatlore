@@ -21,6 +21,7 @@ SQLite database holding the graph and the search indexes.
 ```bash
 chatlore search "postgres index"          # every word must match, any order
 chatlore search "why was my query slow" --semantic   # match by meaning
+chatlore search "slow postgres query" --hybrid       # words and meaning, ranked together
 chatlore search "cat" --source claude     # limit to one source, repeatable
 chatlore search "cat" --limit 25
 chatlore index --rebuild                  # rebuild the database from the library
@@ -55,8 +56,11 @@ Both stages only touch what changed. Vectors are also cached by text hash in
 
 Plain search matches words, with accents and punctuation ignored. `--semantic`
 matches meaning instead, using the embeddings from `chatlore process`, and shows a
-similarity score per hit. A combined ranking that blends both with the graph is
-the next step.
+similarity score per hit. `--hybrid` runs both and merges the two rankings with
+reciprocal rank fusion, so a message found by its words and by its meaning comes
+first, and each hit says which way it was found. Tool output that was never
+chunked still turns up through its words. Blending in the graph comes with
+extraction.
 The library is the source of truth: if the database is ever deleted or an
 upgrade changes its layout, `chatlore index --rebuild` recreates it.
 
