@@ -53,3 +53,12 @@ def chunk_id(message: str, order: int, text: str) -> str:
     id and can never keep an embedding computed for the old text.
     """
     return f"chunk_{_short_digest(message, str(order), text)}"
+
+
+def entity_id(key: str) -> str:
+    """Return the stable id of an entity from its normalised name.
+
+    Mentions whose names differ only in case or spacing share one id, so the
+    same entity found in two chunks becomes one node.
+    """
+    return f"ent_{_short_digest(key)}"
