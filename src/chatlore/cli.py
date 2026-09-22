@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import find_dotenv, load_dotenv
 from rich.console import Console
 from rich.markup import escape
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
@@ -55,7 +56,7 @@ from chatlore.store import (
     open_store,
 )
 
-__all__ = ["app", "default_home", "display_path"]
+__all__ = ["app", "default_home", "display_path", "load_env_file", "run"]
 
 _MAX_ISSUES_SHOWN = 10
 
@@ -66,6 +67,23 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def run() -> None:
+    """Entry point of the ``chatlore`` command: read ``.env``, then run the CLI."""
+    load_env_file()
+    app()
+
+
+def load_env_file() -> None:
+    """Fill in settings from the nearest ``.env`` in or above the working directory.
+
+    Variables already set in the environment win, so a ``.env`` file only supplies
+    what is missing, such as an API key kept out of the shell history.
+    """
+    path = find_dotenv(usecwd=True)
+    if path:
+        load_dotenv(path, override=False)
 
 
 def display_path(path: Path) -> str:

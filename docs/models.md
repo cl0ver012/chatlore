@@ -19,6 +19,15 @@ export OPENROUTER_API_KEY=sk-or-...
 export CHATLORE_LLM_MODEL=qwen/qwen3-235b-a22b-2507   # optional: any OpenRouter model id
 ```
 
+Or keep the key in a `.env` file where you run `chatlore`. The nearest `.env`
+in the current folder or a parent folder is read on start, and variables already
+set in the shell win over it. Keep `.env` out of version control; this repository
+already ignores it.
+
+```bash
+echo "OPENROUTER_API_KEY=sk-or-..." > .env
+```
+
 ## A local server
 
 Ollama, vLLM, LM Studio, and llama.cpp all serve the same API. Point ChatLore
