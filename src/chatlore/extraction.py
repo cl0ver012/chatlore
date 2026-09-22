@@ -13,12 +13,14 @@ calls, and the merge rules can change without extracting again.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
+from chatlore.ids import content_hash
 from chatlore.llm import ChatMessage
 
 PROMPT_VERSION = "1"
@@ -26,6 +28,41 @@ PROMPT_VERSION = "1"
 
 SUGGESTED_TYPES = ("person", "organization", "project", "tool", "concept", "place", "event")
 OTHER_TYPE = "other"
+
+TYPE_ALIASES = {
+    "company": "organization",
+    "organisation": "organization",
+    "institution": "organization",
+    "agency": "organization",
+    "business": "organization",
+    "software": "tool",
+    "technology": "tool",
+    "language": "tool",
+    "framework": "tool",
+    "library": "tool",
+    "platform": "tool",
+    "service": "tool",
+    "app": "tool",
+    "application": "tool",
+    "protocol": "tool",
+    "city": "place",
+    "country": "place",
+    "location": "place",
+    "region": "place",
+    "idea": "concept",
+    "topic": "concept",
+    "method": "concept",
+    "technique": "concept",
+    "conference": "event",
+    "meeting": "event",
+}
+"""Types the model sometimes invents that clearly mean one of the suggested ones."""
+
+SUMMARY_PROMPT_VERSION = "1"
+"""Bump when the summary prompt changes in a way that should rewrite every summary."""
+
+MAX_DESCRIPTIONS = 20
+"""Descriptions sent per entity when asking for its summary."""
 
 _MIN_STRENGTH, _DEFAULT_STRENGTH, _MAX_STRENGTH = 1, 5, 10
 
@@ -100,9 +137,29 @@ class Extraction:
         )
 
 
+_SEPARATORS = re.compile(r"[-_]+")
+_TRAILING_PUNCTUATION = ".:;,!?"
+
+
 def entity_key(name: str) -> str:
-    """The form of a name that decides whether two mentions are the same entity."""
-    return " ".join(name.split()).casefold()
+    """The form of a name that decides whether two mentions are the same entity.
+
+    Case, spacing, hyphens and underscores between words, trailing punctuation,
+    and a plural "s" on the last word are ignored, so "Drive D:" and "drive d",
+    or "Challenge fees" and "challenge fee", are one entity. Punctuation inside a
+    name is kept, so "C++", "C#", and "C" stay apart.
+    """
+    words = _SEPARATORS.sub(" ", name).casefold().split()
+    key = " ".join(words).rstrip(_TRAILING_PUNCTUATION).rstrip()
+    head, _, last = key.rpartition(" ")
+    if len(last) > 3 and last.endswith("s") and not last.endswith(("ss", "us", "is")):
+        key = f"{head} {last[:-1]}" if head else last[:-1]
+    return key
+
+
+def canonical_type(kind: str) -> str:
+    """Map an invented type onto a suggested one when it clearly means the same."""
+    return TYPE_ALIASES.get(kind, kind)
 
 
 def extraction_messages(texts: Sequence[str]) -> list[ChatMessage]:
@@ -143,9 +200,10 @@ def _passage(passage: Mapping[str, Any]) -> Extraction:
     entities: dict[str, ExtractedEntity] = {}
     for item in _list(passage.get("entities")):
         name = _text(item.get("name"))
-        if name and entity_key(name) not in entities:
+        key = entity_key(name)
+        if key and key not in entities:
             kind = _text(item.get("type")).lower() or OTHER_TYPE
-            entities[entity_key(name)] = ExtractedEntity(name, kind, _text(item.get("description")))
+            entities[key] = ExtractedEntity(name, kind, _text(item.get("description")))
 
     relationships: list[ExtractedRelationship] = []
     for item in _list(passage.get("relationships")):
@@ -179,8 +237,68 @@ def _strength(value: Any) -> int:
     return max(_MIN_STRENGTH, min(_MAX_STRENGTH, round(value)))
 
 
+SUMMARY_SYSTEM_PROMPT = """\
+You maintain a knowledge graph built from one person's conversations with AI
+assistants. Each numbered entity below was described several times, each time
+from a different passage. Write one summary per entity: one or two sentences, at
+most 50 words, saying what the entity is and why it matters in these
+conversations. Keep the most important specific facts and leave out the rest.
+Do not add anything the descriptions do not say.
+
+Reply with only a JSON object in this shape, including every entity:
+{"summaries": [{"entity": 1, "summary": "..."}]}"""
+
+
+@dataclass(frozen=True, slots=True)
+class EntityToSummarise:
+    name: str
+    type: str
+    descriptions: tuple[str, ...]
+
+    @property
+    def key(self) -> str:
+        """Identifies this set of descriptions, whatever order they were found in."""
+        return content_hash([self.name, sorted(self.descriptions)])
+
+
+def summary_messages(entities: Sequence[EntityToSummarise]) -> list[ChatMessage]:
+    """The request that asks the model to summarise ``entities`` as numbered items.
+
+    At most ``MAX_DESCRIPTIONS`` descriptions are sent per entity; a summary this
+    short does not need more, and it keeps requests for common entities small.
+    """
+    blocks = "\n\n".join(
+        f"### Entity {number}: {entity.name} ({entity.type})\n"
+        + "\n".join(f"- {description}" for description in entity.descriptions[:MAX_DESCRIPTIONS])
+        for number, entity in enumerate(entities, start=1)
+    )
+    return [ChatMessage("system", SUMMARY_SYSTEM_PROMPT), ChatMessage("user", blocks)]
+
+
+def parse_summaries(answer: str, count: int) -> list[str | None]:
+    """Read the model's summaries of ``count`` entities; a missing one is ``None``."""
+    try:
+        data = json.loads(answer)
+    except json.JSONDecodeError as error:
+        raise ExtractionError(f"the answer is not JSON: {error}") from error
+    items = data.get("summaries") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ExtractionError('the answer has no "summaries" list')
+
+    found: list[str | None] = [None] * count
+    for item in _list(items):
+        number, summary = item.get("entity"), _text(item.get("summary"))
+        if isinstance(number, int) and 1 <= number <= count and summary:
+            found[number - 1] = summary
+    return found
+
+
 class ExtractionCache:
-    """Extractions on disk, keyed by model, prompt version, and text hash."""
+    """Extractions and summaries on disk.
+
+    Extractions are keyed by model, prompt version, and text hash; summaries by
+    model, prompt version, and the entity's name and set of descriptions.
+    """
 
     def __init__(self, path: Path | str = ":memory:") -> None:
         if path != ":memory:":
@@ -190,6 +308,11 @@ class ExtractionCache:
             "CREATE TABLE IF NOT EXISTS extractions ("
             "model TEXT NOT NULL, prompt_version TEXT NOT NULL, text_hash TEXT NOT NULL, "
             "extraction TEXT NOT NULL, PRIMARY KEY (model, prompt_version, text_hash))"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS summaries ("
+            "model TEXT NOT NULL, prompt_version TEXT NOT NULL, entity_key TEXT NOT NULL, "
+            "summary TEXT NOT NULL, PRIMARY KEY (model, prompt_version, entity_key))"
         )
         self._connection.commit()
 
@@ -222,5 +345,25 @@ class ExtractionCache:
                 (model, PROMPT_VERSION, digest, extraction.to_json())
                 for digest, extraction in extractions.items()
             ],
+        )
+        self._connection.commit()
+
+    def get_summaries(self, model: str, keys: Sequence[str]) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for key in keys:
+            row = self._connection.execute(
+                "SELECT summary FROM summaries "
+                "WHERE model = ? AND prompt_version = ? AND entity_key = ?",
+                (model, SUMMARY_PROMPT_VERSION, key),
+            ).fetchone()
+            if row is not None:
+                found[key] = str(row[0])
+        return found
+
+    def put_summaries(self, model: str, summaries: Mapping[str, str]) -> None:
+        self._connection.executemany(
+            "INSERT OR REPLACE INTO summaries (model, prompt_version, entity_key, summary) "
+            "VALUES (?, ?, ?, ?)",
+            [(model, SUMMARY_PROMPT_VERSION, key, summary) for key, summary in summaries.items()],
         )
         self._connection.commit()
