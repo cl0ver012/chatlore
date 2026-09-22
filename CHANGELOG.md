@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `z-ai/glm-5.3-flash` is the default; Ollama, vLLM, and other local servers work by setting
   `CHATLORE_LLM_BASE_URL`. `chatlore doctor` shows the configured model and whether a key is
   set. Model guide in `docs/models.md`.
+- `chatlore` reads settings such as `OPENROUTER_API_KEY` from the nearest `.env` file in or above
+  the current folder. Variables already set in the environment take precedence.
 - CLI output shows paths relative to the home directory.
 
 ### Changed
