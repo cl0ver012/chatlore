@@ -31,6 +31,7 @@ classifiers = [
 ]
 dependencies = [
   "fastembed>=0.4",
+  "networkx>=3.7",
   "openai>=3.17",
   "pydantic>=2.9",
   "pyyaml>=6.0",
@@ -97,7 +98,7 @@ pretty = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec", "fastembed"]
+module = ["sqlite_vec", "fastembed", "networkx"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

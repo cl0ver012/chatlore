@@ -49,9 +49,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merged with reciprocal rank fusion, with chunks folded into their message so each message
   shows once. `chatlore search --hybrid` shows whether a hit matched by words, meaning, or both.
 - Language model client (`chatlore.llm`) for any OpenAI-compatible chat API. OpenRouter with
-  `z-ai/glm-5.3-flash` is the default; Ollama, vLLM, and other local servers work by setting
-  `CHATLORE_LLM_BASE_URL`. `chatlore doctor` shows the configured model and whether a key is
-  set. Model guide in `docs/models.md`.
+  `deepseek/deepseek-v4-flash` and reasoning off is the default; Ollama, vLLM, and other local
+  servers work by setting `CHATLORE_LLM_BASE_URL`. `CHATLORE_LLM_REASONING` sets how much the
+  model may think before answering. `chatlore doctor` shows the configured model, reasoning, and
+  whether a key is set. Model guide, with measurements of seven models, in `docs/models.md`.
+- `chatlore extract` reads chunks with the language model and builds the entity graph: entities,
+  relationships between them, and a link from every chunk to the entities it mentions. Answers
+  are cached by model, prompt version, and text, so repeated and interrupted runs only read new
+  text and a rebuilt database costs no model calls. Guide in `docs/extraction.md`.
+- Entities mentioned more than once get a summary of at most 50 words, cached so it is written
+  once. Names that differ only in case, spacing, hyphens, trailing punctuation, or a plural "s"
+  are one entity, and invented types such as company or city count as the suggested ones.
+- Possible duplicates, such as "AWS" and "Amazon Web Services", are proposed from their names and
+  judged by the model; confirmed pairs are linked with `SAME_AS` and both entities are kept.
+- Topics: Leiden community detection groups related entities, groups over 40 entities are split
+  again, and the model writes a report on each topic with a title, summary, and findings.
+- `chatlore topics` lists topics or finds them by words, and `chatlore entity` shows an entity's
+  summary, other names, topic, relationships, and the conversations that mention it.
+- `chatlore search --hybrid` also finds messages through the entities they mention.
 - CLI output shows paths relative to the home directory.
 
 ### Changed
@@ -67,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An empty answer from the language model, or one cut off at the token limit, no longer stops
+  extraction; that batch is asked again on the next run. Found on a real export, where one empty
+  answer ended a run after 600 of 2,043 chunks.
 - Claude exports with conversations whose every message is blank no longer abort with
   `max() iterable argument is empty`; they are skipped and reported once. Found with a
   real export, where 234 of 355 conversations were blank.

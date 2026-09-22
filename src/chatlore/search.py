@@ -8,14 +8,19 @@ list, so BM25 scores and vector distances never have to be put on one scale.
 Chunks are folded into the message they came from. A message found both ways
 is shown once and ranks above one found only one way, and messages that were
 never chunked, such as tool output, stay findable through their words.
+
+Once `chatlore extract` has built the entity graph, a third list joins in:
+messages that mention an entity whose name or summary matches the query. It
+finds a conversation about a tool or a person even where the message itself
+names them differently.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from chatlore.store import GraphStore, Label
+from chatlore.store import EdgeType, GraphStore, Label
 
 RRF_K = 60
 """Damping constant from the original reciprocal rank fusion paper."""
@@ -26,7 +31,7 @@ CANDIDATES_PER_RESULT = 4
 
 @dataclass(frozen=True, slots=True)
 class HybridHit:
-    """A message found by its words, its meaning, or both."""
+    """A message found by its words, its meaning, the entities it mentions, or several."""
 
     message_id: str
     conversation_id: str | None
@@ -36,6 +41,7 @@ class HybridHit:
     score: float
     by_words: bool
     by_meaning: bool
+    by_entity: bool = False
 
 
 def hybrid_search(
@@ -103,6 +109,36 @@ def hybrid_search(
                 by_meaning=True,
             )
         if len(seen) >= candidates:
+            break
+
+    mentioned: set[str] = set()
+    for entity_hit in store.search_text(query, limit=limit, labels=[Label.ENTITY]):
+        chunks = store.neighbors(entity_hit.node_id, [EdgeType.MENTIONS], "in", limit=candidates)
+        for _, chunk in sorted(chunks, key=lambda pair: pair[1].id):
+            if wanted and chunk.props.get("source") not in wanted:
+                continue
+            message_id = str(chunk.props.get("message_id") or chunk.id)
+            if message_id in mentioned:
+                continue
+            mentioned.add(message_id)
+            score = 1.0 / (RRF_K + len(mentioned))
+            found = hits.get(message_id)
+            if found is not None:
+                hits[message_id] = replace(found, score=found.score + score, by_entity=True)
+            else:
+                title = chunk.props.get("title")
+                hits[message_id] = HybridHit(
+                    message_id=message_id,
+                    conversation_id=chunk.props.get("conversation_id"),
+                    source=chunk.props.get("source"),
+                    title=str(title) if title else None,
+                    snippet=str(chunk.props.get("text", "")),
+                    score=score,
+                    by_words=False,
+                    by_meaning=False,
+                    by_entity=True,
+                )
+        if len(mentioned) >= candidates:
             break
 
     ranked = sorted(hits.values(), key=lambda hit: hit.score, reverse=True)

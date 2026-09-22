@@ -23,12 +23,22 @@ if TYPE_CHECKING:
     from openai.types.chat import ChatCompletionMessageParam
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "z-ai/glm-5.3-flash"
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_REASONING = "off"
 
 BASE_URL_ENV = "CHATLORE_LLM_BASE_URL"
 MODEL_ENV = "CHATLORE_LLM_MODEL"
 API_KEY_ENV = "CHATLORE_LLM_API_KEY"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
+REASONING_ENV = "CHATLORE_LLM_REASONING"
+
+REASONING_LEVELS = ("off", "low", "medium", "high", "default")
+"""How much the model may think before answering; "default" leaves it to the model.
+
+Extraction asks many short, well-specified questions, where reasoning mostly
+costs time: measured on a real export, a reasoning model spent 70% of its output
+on hidden reasoning and took 65 to 90 seconds per request.
+"""
 
 _NO_KEY = "not-needed"
 """Sent to servers that take no key, since the client insists on one."""
@@ -36,6 +46,14 @@ _NO_KEY = "not-needed"
 
 class LLMError(Exception):
     """The model could not be reached or did not return a usable answer."""
+
+
+class LLMAnswerError(LLMError):
+    """The model answered, but the answer cannot be used: empty or cut off.
+
+    Unlike an unreachable server, this can happen to one request among many, so
+    callers working through a batch may skip it and ask again later.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,11 +97,32 @@ class LLMSettings:
     base_url: str
     model: str
     api_key: str | None
+    reasoning: str = DEFAULT_REASONING
 
     @property
     def is_openrouter(self) -> bool:
-        host = urlparse(self.base_url).hostname or ""
-        return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+        return _is_openrouter(self.base_url)
+
+
+def _is_openrouter(base_url: str) -> bool:
+    host = urlparse(base_url).hostname or ""
+    return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+
+def _reasoning_body(reasoning: str, base_url: str) -> dict[str, object]:
+    """The request fields that set ``reasoning``; OpenRouter has its own shape.
+
+    Other OpenAI-compatible servers get the standard ``reasoning_effort`` field,
+    with "none" for off. Nothing is sent for "default", so servers that do not
+    know either field are not affected.
+    """
+    if reasoning == "default":
+        return {}
+    if _is_openrouter(base_url):
+        if reasoning == "off":
+            return {"reasoning": {"enabled": False}}
+        return {"reasoning": {"effort": reasoning}}
+    return {"reasoning_effort": "none" if reasoning == "off" else reasoning}
 
 
 class OpenAICompatibleLLM:
@@ -98,9 +137,12 @@ class OpenAICompatibleLLM:
         timeout: float = 120.0,
         max_retries: int = 2,
         http_client: httpx2.Client | None = None,
+        reasoning: str = "default",
     ) -> None:
         self.name = model
         self.base_url = base_url
+        self.reasoning = reasoning
+        self._extra_body = _reasoning_body(reasoning, base_url)
         self._client = openai.OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -133,6 +175,7 @@ class OpenAICompatibleLLM:
                 messages=params,
                 response_format={"type": "json_object"} if json_output else openai.omit,
                 max_tokens=max_tokens if max_tokens is not None else openai.omit,
+                extra_body=self._extra_body or None,
             )
         except openai.APIStatusError as error:
             raise LLMError(
@@ -143,13 +186,13 @@ class OpenAICompatibleLLM:
             raise LLMError(f"could not reach {self.base_url}: {error}") from error
 
         if not response.choices:
-            raise LLMError(f"{self.name} returned no answer")
+            raise LLMAnswerError(f"{self.name} returned no answer")
         choice = response.choices[0]
         if choice.finish_reason == "length":
-            raise LLMError(f"{self.name} stopped at the token limit before finishing")
+            raise LLMAnswerError(f"{self.name} stopped at the token limit before finishing")
         text = choice.message.content or ""
         if not text.strip():
-            raise LLMError(f"{self.name} returned an empty answer")
+            raise LLMAnswerError(f"{self.name} returned an empty answer")
         usage = response.usage
         return Completion(
             text=text,
@@ -167,10 +210,13 @@ def llm_settings() -> LLMSettings:
     """
     base_url = os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL
     model = os.environ.get(MODEL_ENV) or DEFAULT_MODEL
-    settings = LLMSettings(base_url, model, os.environ.get(API_KEY_ENV) or None)
-    if settings.api_key is None and settings.is_openrouter:
-        return LLMSettings(base_url, model, os.environ.get(OPENROUTER_KEY_ENV) or None)
-    return settings
+    reasoning = (os.environ.get(REASONING_ENV) or DEFAULT_REASONING).strip().lower()
+    if reasoning not in REASONING_LEVELS:
+        raise LLMError(f"{REASONING_ENV} must be one of {', '.join(REASONING_LEVELS)}")
+    key = os.environ.get(API_KEY_ENV) or None
+    if key is None and _is_openrouter(base_url):
+        key = os.environ.get(OPENROUTER_KEY_ENV) or None
+    return LLMSettings(base_url, model, key, reasoning)
 
 
 def make_llm() -> OpenAICompatibleLLM:
@@ -181,4 +227,9 @@ def make_llm() -> OpenAICompatibleLLM:
             f"no API key for OpenRouter. Set {OPENROUTER_KEY_ENV}, or point "
             f"{BASE_URL_ENV} at a local server such as http://localhost:11434/v1"
         )
-    return OpenAICompatibleLLM(settings.model, settings.base_url, settings.api_key or _NO_KEY)
+    return OpenAICompatibleLLM(
+        settings.model,
+        settings.base_url,
+        settings.api_key or _NO_KEY,
+        reasoning=settings.reasoning,
+    )
