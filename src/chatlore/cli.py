@@ -116,14 +116,17 @@ def doctor() -> None:
 
 def _describe_llm() -> str:
     """Name the configured model and whether it has a key, without showing the key."""
-    settings = llm_settings()
+    try:
+        settings = llm_settings()
+    except LLMError as error:
+        return str(error)
     if settings.api_key is not None:
         key = "API key set"
     elif settings.is_openrouter:
         key = f"no API key, set {OPENROUTER_KEY_ENV}"
     else:
         key = "no API key needed"
-    return f"{settings.model} via {settings.base_url} ({key})"
+    return f"{settings.model} via {settings.base_url} (reasoning {settings.reasoning}, {key})"
 
 
 @app.command("import")
