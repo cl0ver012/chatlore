@@ -192,3 +192,20 @@ def test_semantic_search_finds_by_shared_meaning(home: Path, fixtures: Path) -> 
     assert "Trip ideas" in found.output
     assert "similarity" in found.output
     assert "No matches" in other_source.output
+
+
+def test_hybrid_search_ranks_words_and_meaning_together(home: Path, fixtures: Path) -> None:
+    runner.invoke(app, ["import", str(fixtures / "chatgpt" / "conversations.json")])
+    before = runner.invoke(app, ["search", "composite index", "--hybrid"])
+    runner.invoke(app, ["process"])
+
+    found = runner.invoke(app, ["search", "composite index", "--hybrid", "--limit", "1"])
+    other_source = runner.invoke(app, ["search", "composite index", "--hybrid", "-s", "claude"])
+    both = runner.invoke(app, ["search", "composite index", "--hybrid", "--semantic"])
+
+    assert "Run `chatlore process` first" in before.output
+    assert found.exit_code == 0
+    assert "Postgres indexing" in found.output
+    assert "words + meaning" in found.output
+    assert "No matches" in other_source.output
+    assert both.exit_code != 0
