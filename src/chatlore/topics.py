@@ -25,6 +25,8 @@ REPORT_PROMPT_VERSION = "1"
 """Bump when the report prompt changes in a way that should rewrite every report."""
 
 MIN_TOPIC_SIZE = 3
+MAX_TOPIC_SIZE = 40
+"""Larger groups are split again on their own, as hierarchical Leiden does in GraphRAG."""
 MAX_MEMBERS_SHOWN = 30
 MAX_LINKS_SHOWN = 30
 MAX_FINDINGS = 5
@@ -89,15 +91,35 @@ class Link:
     weight: int
 
 
+def _leiden(graph: nx.Graph[str], nodes: set[str], max_size: int) -> list[set[str]]:
+    """Split ``nodes`` into communities, splitting again any larger than ``max_size``."""
+    part = graph.subgraph(nodes)
+    if part.number_of_edges() == 0:
+        return [nodes]
+    groups = nx.community.leiden_communities(part, weight="weight", seed=SEED, metric="modularity")
+    if len(groups) <= 1:
+        return [nodes]
+    return [
+        piece
+        for group in groups
+        for piece in (
+            [set(group)] if len(group) <= max_size else _leiden(graph, set(group), max_size)
+        )
+    ]
+
+
 def find_topics(
     entities: Iterable[str],
     links: Iterable[tuple[str, str, int]],
     same: Iterable[tuple[str, str]] = (),
+    max_size: int = MAX_TOPIC_SIZE,
 ) -> list[list[str]]:
     """Group entity ids into topics, largest first, each sorted by id.
 
     ``links`` are weighted relationships and ``same`` pairs of entities recorded
-    as one thing. Only groups of at least ``MIN_TOPIC_SIZE`` entities count.
+    as one thing. Only groups of at least ``MIN_TOPIC_SIZE`` entities count, and a
+    group larger than ``max_size`` is split again as long as Leiden finds a split,
+    so one well-connected entity cannot pull half the graph into one topic.
     """
     known = set(entities)
     graph: nx.Graph[str] = nx.Graph()
@@ -122,9 +144,7 @@ def find_topics(
     members: dict[str, list[str]] = {}
     for node, root in merged.items():
         members.setdefault(root, []).append(node)
-    groups = nx.community.leiden_communities(
-        weighted, weight="weight", seed=SEED, metric="modularity"
-    )
+    groups = _leiden(weighted, set(weighted.nodes), max_size)
     topics = [sorted(node for root in group for node in members[root]) for group in groups]
     topics = [topic for topic in topics if len(topic) >= MIN_TOPIC_SIZE]
     return sorted(topics, key=lambda topic: (-len(topic), topic[0]))

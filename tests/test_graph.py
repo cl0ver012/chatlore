@@ -317,3 +317,20 @@ def test_entities_are_found_by_name_and_summary(store: GraphStore, cache: Extrac
     assert node is not None
     assert node.props["name"] == "Postgres"
     assert node.props["text"] == f"Postgres: {node.props['summary']}"
+
+
+def test_a_large_group_is_split_again() -> None:
+    # A ring of small cliques is the textbook case where modularity merges groups
+    # that belong apart: on the whole graph they pair up, on their own they split.
+    links: list[tuple[str, str, int]] = []
+    for clique in range(40):
+        links += _clique(f"c{clique}n", 3)
+        links.append((f"c{clique}n0", f"c{(clique + 1) % 40}n2", 1))
+    entities = {name for link in links for name in link[:2]}
+
+    unlimited = find_topics(entities, links, max_size=len(entities))
+    limited = find_topics(entities, links, max_size=3)
+
+    assert max(len(topic) for topic in unlimited) == 6
+    assert {len(topic) for topic in limited} == {3}
+    assert sorted(name for topic in limited for name in topic) == sorted(entities)
