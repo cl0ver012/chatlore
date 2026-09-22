@@ -22,6 +22,7 @@ uv run chatlore search "postgres index"
 uv run chatlore process                                  # chunk and embed, local model
 uv run chatlore search "why was my query slow" --semantic
 uv run chatlore search "slow postgres query" --hybrid     # words and meaning together
+uv run chatlore extract --limit 50                        # entities, needs a model key
 uv run chatlore stats
 ```
 
@@ -29,7 +30,8 @@ The source is detected from the file. Importing is idempotent, so re-running it
 after a fresh export only adds what changed. How to get each export, what is
 kept, and the known limits are in [docs/importers.md](docs/importers.md).
 Extraction and chat will use any OpenAI-compatible model, OpenRouter by default;
-see [docs/models.md](docs/models.md).
+see [docs/models.md](docs/models.md). Extraction is described in
+[docs/extraction.md](docs/extraction.md).
 
 ## What ChatLore will do
 
@@ -59,7 +61,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
 | M3 | Chunking, embeddings, hybrid search | done |
-| M4 | Entity, topic, and fact extraction with provenance | model client done, extraction next |
+| M4 | Entity, topic, and fact extraction with provenance | entity extraction done, merging and topics next |
 | M5 | REST API with streaming chat | planned |
 | M6 | Web UI: conversations, graph explorer, chat | planned |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | planned |

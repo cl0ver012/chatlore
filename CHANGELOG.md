@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `z-ai/glm-5.3-flash` is the default; Ollama, vLLM, and other local servers work by setting
   `CHATLORE_LLM_BASE_URL`. `chatlore doctor` shows the configured model and whether a key is
   set. Model guide in `docs/models.md`.
+- `chatlore extract` reads chunks with the language model and builds the entity graph: entities,
+  relationships between them, and a link from every chunk to the entities it mentions. Answers
+  are cached by model, prompt version, and text, so repeated and interrupted runs only read new
+  text and a rebuilt database costs no model calls. Guide in `docs/extraction.md`.
 - CLI output shows paths relative to the home directory.
 
 ### Changed
