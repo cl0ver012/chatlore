@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from openai.types.chat import ChatCompletionMessageParam
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 
 BASE_URL_ENV = "CHATLORE_LLM_BASE_URL"
 MODEL_ENV = "CHATLORE_LLM_MODEL"

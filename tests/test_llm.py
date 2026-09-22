@@ -38,7 +38,7 @@ def _answer(content: str | None, finish_reason: str = "stop") -> dict[str, Any]:
         "id": "gen-1",
         "object": "chat.completion",
         "created": 0,
-        "model": "deepseek/deepseek-v4-flash-0731",
+        "model": "z-ai/glm-5.3-flash-routed",
         "choices": [
             {
                 "index": 0,
@@ -56,7 +56,7 @@ def make_client() -> Iterator[Callable[[Handler], OpenAICompatibleLLM]]:
 
     def build(handler: Handler) -> OpenAICompatibleLLM:
         client = OpenAICompatibleLLM(
-            "deepseek/deepseek-v4-flash",
+            "z-ai/glm-5.3-flash",
             "https://openrouter.ai/api/v1",
             "sk-test",
             max_retries=0,
@@ -84,13 +84,13 @@ def test_complete_sends_the_conversation_and_reads_the_answer(
     )
 
     assert completion.text == "Paris"
-    assert completion.model == "deepseek/deepseek-v4-flash-0731"
+    assert completion.model == "z-ai/glm-5.3-flash-routed"
     assert (completion.input_tokens, completion.output_tokens) == (12, 3)
     request = seen[0]
     body = json.loads(request.content)
     assert str(request.url) == "https://openrouter.ai/api/v1/chat/completions"
     assert request.headers["authorization"] == "Bearer sk-test"
-    assert body["model"] == "deepseek/deepseek-v4-flash"
+    assert body["model"] == "z-ai/glm-5.3-flash"
     assert body["messages"] == [
         {"role": "system", "content": "Answer briefly."},
         {"role": "user", "content": "Capital of France?"},
@@ -147,7 +147,7 @@ def test_an_unreachable_server_raises_llm_error(
         make_client(handler).complete([ChatMessage("user", "Hello")])
 
 
-def test_defaults_are_openrouter_and_deepseek(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_defaults_are_openrouter_and_glm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
 
     settings = llm_settings()
