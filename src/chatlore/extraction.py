@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Self
 
@@ -72,8 +73,9 @@ For each numbered passage, list the entities it mentions and how they relate.
 
 Entities are specific things worth remembering: people, organizations, projects,
 tools and technologies, concepts, places, and events. Skip generic words such as
-"user", "assistant", "code", or "question". Use the fullest common name, for
-example "PostgreSQL" rather than "the database".
+"user", "assistant", "code", or "question", and labels that only make sense
+inside the passage, such as "Solution A", "Option 2", or "Step 3". Use the
+fullest common name, for example "PostgreSQL" rather than "the database".
 - type: one of {", ".join(SUGGESTED_TYPES)}, or another single lowercase word if
   none fits.
 - description: one sentence about the entity, based only on the passage.
@@ -293,11 +295,128 @@ def parse_summaries(answer: str, count: int) -> list[str | None]:
     return found
 
 
+SAME_PROMPT_VERSION = "1"
+"""Bump when the duplicate prompt changes in a way that should ask about every pair again."""
+
+SAME_SYSTEM_PROMPT = """\
+You maintain a knowledge graph built from one person's conversations with AI
+assistants. Each numbered pair below names two entities with their types and
+summaries. Decide whether both names refer to the same real thing, such as one
+tool, person, organization, or place under two names. Different versions,
+different products of one company, and a part and its whole are not the same.
+Say true only when you are confident.
+
+Reply with only a JSON object in this shape, including every pair:
+{"pairs": [{"pair": 1, "same": false}]}"""
+
+_SIMILAR_NAMES = 0.85
+_MIN_PREFIX = 4
+
+
+@dataclass(frozen=True, slots=True)
+class EntityCard:
+    """How an entity is shown to the model when comparing it with another."""
+
+    name: str
+    type: str
+    summary: str
+
+
+def pair_key(first: str, second: str) -> str:
+    """Identifies a pair of entity keys, whichever order they come in."""
+    return content_hash(sorted([first, second]))
+
+
+def duplicate_candidates(keys: Iterable[str]) -> list[tuple[str, str]]:
+    """Pairs of entity keys that might name the same thing, for the model to decide.
+
+    Generous on purpose, because the model rejects what is not the same:
+    - one name starts with the other, or they are spelled almost alike, when both
+      start with the same four letters ("postgre" and "postgresql");
+    - one name is the other with words added at the end ("postgre" and
+      "postgre database", "claude code" and "claude code cli"), or at the start
+      when the shorter has two words or more;
+    - one short name is the initials of the other ("kyc" and "know your customer").
+    Names are only compared within those groups, so large graphs stay fast.
+    """
+    ordered = sorted(set(keys))
+    by_start: dict[str, list[str]] = {}
+    by_first_word: dict[str, list[str]] = {}
+    by_last_word: dict[str, list[str]] = {}
+    by_initials: dict[str, list[str]] = {}
+    for key in ordered:
+        words = key.split()
+        if len(key) >= _MIN_PREFIX:
+            by_start.setdefault(key[:_MIN_PREFIX], []).append(key)
+        if len(words) > 1:
+            by_first_word.setdefault(words[0], []).append(key)
+            by_last_word.setdefault(words[-1], []).append(key)
+            by_initials.setdefault("".join(word[0] for word in words), []).append(key)
+
+    pairs: set[tuple[str, str]] = set()
+
+    def add(first: str, second: str) -> None:
+        if first != second:
+            pairs.add((min(first, second), max(first, second)))
+
+    for key in ordered:
+        words = key.split()
+        for other in by_first_word.get(words[0], ()):
+            if len(other.split()) > len(words) and other.split()[: len(words)] == words:
+                add(key, other)
+        if len(words) > 1:
+            for other in by_last_word.get(words[-1], ()):
+                if len(other.split()) > len(words) and other.split()[-len(words) :] == words:
+                    add(key, other)
+        if len(words) == 1 and 2 <= len(key) <= 6:
+            for other in by_initials.get(key, ()):
+                add(key, other)
+    for group in by_start.values():
+        for index, first in enumerate(group):
+            for second in group[index + 1 :]:
+                if (
+                    first.startswith(second)
+                    or second.startswith(first)
+                    or SequenceMatcher(None, first, second).ratio() >= _SIMILAR_NAMES
+                ):
+                    add(first, second)
+    return sorted(pairs)
+
+
+def duplicate_messages(pairs: Sequence[tuple[EntityCard, EntityCard]]) -> list[ChatMessage]:
+    """The request that asks the model whether each numbered pair is one thing."""
+    blocks = "\n\n".join(
+        f"### Pair {number}\n"
+        + "\n".join(f"- {card.name} ({card.type}): {card.summary}" for card in pair)
+        for number, pair in enumerate(pairs, start=1)
+    )
+    return [ChatMessage("system", SAME_SYSTEM_PROMPT), ChatMessage("user", blocks)]
+
+
+def parse_duplicates(answer: str, count: int) -> list[bool | None]:
+    """Read the model's verdicts on ``count`` pairs; a missing one is ``None``."""
+    try:
+        data = json.loads(answer)
+    except json.JSONDecodeError as error:
+        raise ExtractionError(f"the answer is not JSON: {error}") from error
+    items = data.get("pairs") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ExtractionError('the answer has no "pairs" list')
+
+    found: list[bool | None] = [None] * count
+    for item in _list(items):
+        number, same = item.get("pair"), item.get("same")
+        if isinstance(number, int) and 1 <= number <= count and isinstance(same, bool):
+            found[number - 1] = same
+    return found
+
+
 class ExtractionCache:
-    """Extractions and summaries on disk.
+    """What the model answered, on disk, so no question is asked twice.
 
     Extractions are keyed by model, prompt version, and text hash; summaries by
-    model, prompt version, and the entity's name and set of descriptions.
+    the entity's name and set of descriptions; duplicate verdicts by the pair of
+    entity names; topic reports by the set of entities in the topic.
     """
 
     def __init__(self, path: Path | str = ":memory:") -> None:
@@ -313,6 +432,16 @@ class ExtractionCache:
             "CREATE TABLE IF NOT EXISTS summaries ("
             "model TEXT NOT NULL, prompt_version TEXT NOT NULL, entity_key TEXT NOT NULL, "
             "summary TEXT NOT NULL, PRIMARY KEY (model, prompt_version, entity_key))"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS verdicts ("
+            "model TEXT NOT NULL, prompt_version TEXT NOT NULL, pair_key TEXT NOT NULL, "
+            "same INTEGER NOT NULL, PRIMARY KEY (model, prompt_version, pair_key))"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS reports ("
+            "model TEXT NOT NULL, prompt_version TEXT NOT NULL, topic_key TEXT NOT NULL, "
+            "report TEXT NOT NULL, PRIMARY KEY (model, prompt_version, topic_key))"
         )
         self._connection.commit()
 
@@ -365,5 +494,45 @@ class ExtractionCache:
             "INSERT OR REPLACE INTO summaries (model, prompt_version, entity_key, summary) "
             "VALUES (?, ?, ?, ?)",
             [(model, SUMMARY_PROMPT_VERSION, key, summary) for key, summary in summaries.items()],
+        )
+        self._connection.commit()
+
+    def get_verdicts(self, model: str, keys: Sequence[str]) -> dict[str, bool]:
+        found: dict[str, bool] = {}
+        for key in keys:
+            row = self._connection.execute(
+                "SELECT same FROM verdicts WHERE model = ? AND prompt_version = ? AND pair_key = ?",
+                (model, SAME_PROMPT_VERSION, key),
+            ).fetchone()
+            if row is not None:
+                found[key] = bool(row[0])
+        return found
+
+    def put_verdicts(self, model: str, verdicts: Mapping[str, bool]) -> None:
+        self._connection.executemany(
+            "INSERT OR REPLACE INTO verdicts (model, prompt_version, pair_key, same) "
+            "VALUES (?, ?, ?, ?)",
+            [(model, SAME_PROMPT_VERSION, key, int(same)) for key, same in verdicts.items()],
+        )
+        self._connection.commit()
+
+    def get_reports(self, model: str, version: str, keys: Sequence[str]) -> dict[str, str]:
+        """Topic reports as the JSON they were stored as; the topics module reads them."""
+        found: dict[str, str] = {}
+        for key in keys:
+            row = self._connection.execute(
+                "SELECT report FROM reports WHERE model = ? AND prompt_version = ? "
+                "AND topic_key = ?",
+                (model, version, key),
+            ).fetchone()
+            if row is not None:
+                found[key] = str(row[0])
+        return found
+
+    def put_reports(self, model: str, version: str, reports: Mapping[str, str]) -> None:
+        self._connection.executemany(
+            "INSERT OR REPLACE INTO reports (model, prompt_version, topic_key, report) "
+            "VALUES (?, ?, ?, ?)",
+            [(model, version, key, report) for key, report in reports.items()],
         )
         self._connection.commit()
