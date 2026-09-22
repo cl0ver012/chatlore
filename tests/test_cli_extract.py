@@ -60,22 +60,28 @@ def test_extract_explains_a_missing_key(home: Path, monkeypatch: pytest.MonkeyPa
 def test_extract_builds_the_graph_and_is_idempotent(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    runner.invoke(app, ["note", "Postgres needs an index on orders."])
+    runner.invoke(app, ["note", "Postgres was slow before the index."])
     runner.invoke(app, ["process", "--no-embed"])
     llm = _use(monkeypatch, FakeLLM())
 
     first = runner.invoke(app, ["extract", "--batch-size", "2"])
-    requests = len(llm.requests)
+    requests = (len(llm.requests), len(llm.summary_requests))
     second = runner.invoke(app, ["extract"])
 
     assert first.exit_code == 0 and second.exit_code == 0
     with open_store(home) as store:
         chunks = store.count_nodes(Label.CHUNK)
         entities = store.count_nodes(Label.ENTITY)
+        summaries = [node.props["summary"] for node in store.find_nodes(Label.ENTITY)]
+    assert None not in summaries
+    assert _row(first.output, "entities summarised now") == len(llm.summary_requests[0]) > 0
+    assert _row(second.output, "entities summarised now") == 0
     assert _row(first.output, "chunks read now") == chunks
     assert _row(second.output, "chunks read now") == 0
     assert _row(second.output, "chunks read before") == chunks
     assert _row(second.output, "entities") == entities > 0
-    assert len(llm.requests) == requests
+    assert (len(llm.requests), len(llm.summary_requests)) == requests
     assert (home / "cache" / "extractions.db").exists()
 
 

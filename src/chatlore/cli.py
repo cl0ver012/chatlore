@@ -33,10 +33,12 @@ from chatlore.paths import default_home
 from chatlore.pipeline import (
     EmbeddingModelMismatchError,
     pending_extractions,
+    pending_summaries,
     sync_chunks,
     sync_embeddings,
     sync_entities,
     sync_extractions,
+    sync_summaries,
 )
 from chatlore.search import hybrid_search
 from chatlore.store import DATABASE_NAME, GraphStore, Label, TextHit, open_store
@@ -300,9 +302,9 @@ def extract(
     ] = 4,
     workers: Annotated[
         int, typer.Option("--workers", min=1, help="Requests sent at the same time.")
-    ] = 4,
+    ] = 8,
 ) -> None:
-    """Find entities and relationships with a language model. Safe to repeat and to interrupt."""
+    """Find and summarise entities with a language model. Safe to repeat and to interrupt."""
     home = default_home()
     with open_store(home) as store:
         if store.count_nodes(Label.CHUNK) == 0:
@@ -319,6 +321,7 @@ def extract(
         table.add_column("value", justify="right")
         table.add_row("model", llm.name)
         failure: LLMError | None = None
+        tokens = [0, 0]
         try:
             with (
                 ExtractionCache(home / "cache" / "extractions.db") as cache,
@@ -340,14 +343,33 @@ def extract(
                     table.add_row("chunks read now", str(report.extracted))
                     table.add_row("chunks read before", str(report.already_done))
                     table.add_row("unreadable answers", str(report.failed))
-                    table.add_row("tokens in", str(report.input_tokens))
-                    table.add_row("tokens out", str(report.output_tokens))
+                    tokens = [report.input_tokens, report.output_tokens]
                 except LLMError as error:
                     failure = error
                 # Assemble whatever has been read, even after a failure.
                 graph = sync_entities(store, cache, llm.name)
+                if failure is None:
+                    task = progress.add_task(
+                        "Summarising entities", total=len(pending_summaries(store))
+                    )
+                    try:
+                        summaries = sync_summaries(
+                            store,
+                            llm,
+                            cache,
+                            workers=workers,
+                            on_progress=lambda n: progress.advance(task, n),
+                        )
+                        table.add_row("entities summarised now", str(summaries.summarised))
+                        table.add_row("unreadable summaries", str(summaries.failed))
+                        tokens[0] += summaries.input_tokens
+                        tokens[1] += summaries.output_tokens
+                    except LLMError as error:
+                        failure = error
         finally:
             llm.close()
+        table.add_row("tokens in", str(tokens[0]))
+        table.add_row("tokens out", str(tokens[1]))
         table.add_row("entities", str(graph.entities))
         table.add_row("relationships", str(graph.relationships))
         table.add_row("mentions", str(graph.mentions))
