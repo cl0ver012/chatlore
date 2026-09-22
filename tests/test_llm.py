@@ -13,6 +13,7 @@ from chatlore.llm import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
     ChatMessage,
+    LLMAnswerError,
     LLMError,
     OpenAICompatibleLLM,
     llm_settings,
@@ -28,6 +29,7 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "CHATLORE_LLM_BASE_URL",
         "CHATLORE_LLM_MODEL",
         "CHATLORE_LLM_API_KEY",
+        "CHATLORE_LLM_REASONING",
         "OPENROUTER_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -147,7 +149,9 @@ def test_an_unreachable_server_raises_llm_error(
         make_client(handler).complete([ChatMessage("user", "Hello")])
 
 
-def test_defaults_are_openrouter_and_glm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_defaults_are_openrouter_and_deepseek_without_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
 
     settings = llm_settings()
@@ -161,6 +165,7 @@ def test_defaults_are_openrouter_and_glm(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert settings.is_openrouter
     assert llm.name == DEFAULT_MODEL
+    assert llm.reasoning == "off"
 
 
 def test_openrouter_without_a_key_explains_what_to_set() -> None:
@@ -194,3 +199,81 @@ def test_the_chatlore_key_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHATLORE_LLM_API_KEY", "sk-chatlore")
 
     assert llm_settings().api_key == "sk-chatlore"
+
+
+@pytest.mark.parametrize(
+    ("response", "retryable"),
+    [
+        (httpx2.Response(200, json=_answer("cut off", "length")), True),
+        (httpx2.Response(200, json=_answer("")), True),
+        (httpx2.Response(401, json={"error": {"message": "No auth"}}), False),
+    ],
+)
+def test_answers_the_model_gave_but_cannot_be_used_are_told_apart(
+    make_client: Callable[[Handler], OpenAICompatibleLLM],
+    response: httpx2.Response,
+    retryable: bool,
+) -> None:
+    client = make_client(lambda request: response)
+
+    with pytest.raises(LLMError) as raised:
+        client.complete([ChatMessage("user", "Hello")])
+
+    assert isinstance(raised.value, LLMAnswerError) is retryable
+
+
+def _body_with(reasoning: str, base_url: str) -> dict[str, Any]:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_answer("ok"))
+
+    client = OpenAICompatibleLLM(
+        "some-model",
+        base_url,
+        "sk-test",
+        max_retries=0,
+        http_client=httpx2.Client(transport=httpx2.MockTransport(handler)),
+        reasoning=reasoning,
+    )
+    try:
+        client.complete([ChatMessage("user", "Hello")])
+    finally:
+        client.close()
+    return bodies[0]
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "base_url", "sent"),
+    [
+        ("off", "https://openrouter.ai/api/v1", {"reasoning": {"enabled": False}}),
+        ("low", "https://openrouter.ai/api/v1", {"reasoning": {"effort": "low"}}),
+        ("off", "http://localhost:11434/v1", {"reasoning_effort": "none"}),
+        ("high", "http://localhost:11434/v1", {"reasoning_effort": "high"}),
+    ],
+)
+def test_reasoning_is_sent_the_way_each_server_expects(
+    reasoning: str, base_url: str, sent: dict[str, Any]
+) -> None:
+    body = _body_with(reasoning, base_url)
+
+    assert {key: body[key] for key in sent} == sent
+
+
+def test_default_reasoning_sends_nothing() -> None:
+    body = _body_with("default", "https://openrouter.ai/api/v1")
+
+    assert "reasoning" not in body
+    assert "reasoning_effort" not in body
+
+
+def test_reasoning_is_off_unless_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert llm_settings().reasoning == "off"
+
+    monkeypatch.setenv("CHATLORE_LLM_REASONING", " Low ")
+    assert llm_settings().reasoning == "low"
+
+    monkeypatch.setenv("CHATLORE_LLM_REASONING", "extreme")
+    with pytest.raises(LLMError, match="CHATLORE_LLM_REASONING"):
+        llm_settings()

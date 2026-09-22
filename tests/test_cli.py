@@ -66,13 +66,15 @@ def test_doctor_names_the_model_without_showing_the_key(
     monkeypatch.delenv("CHATLORE_LLM_MODEL", raising=False)
     monkeypatch.delenv("CHATLORE_LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("CHATLORE_LLM_REASONING", raising=False)
     monkeypatch.setenv("COLUMNS", "200")
     missing = runner.invoke(app, ["doctor"])
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-secret")
 
     present = runner.invoke(app, ["doctor"])
 
-    assert "z-ai/glm-5.3-flash" in missing.output
+    assert "deepseek/deepseek-v4-flash" in missing.output
+    assert "reasoning off" in missing.output
     assert "set OPENROUTER_API_KEY" in missing.output
     assert "API key set" in present.output
     assert "sk-or-secret" not in present.output

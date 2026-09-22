@@ -21,7 +21,7 @@ SQLite database holding the graph and the search indexes.
 ```bash
 chatlore search "postgres index"          # every word must match, any order
 chatlore search "why was my query slow" --semantic   # match by meaning
-chatlore search "slow postgres query" --hybrid       # words and meaning, ranked together
+chatlore search "slow postgres query" --hybrid       # words, meaning, and entities together
 chatlore search "cat" --source claude     # limit to one source, repeatable
 chatlore search "cat" --limit 25
 chatlore index --rebuild                  # rebuild the database from the library
@@ -59,8 +59,9 @@ matches meaning instead, using the embeddings from `chatlore process`, and shows
 similarity score per hit. `--hybrid` runs both and merges the two rankings with
 reciprocal rank fusion, so a message found by its words and by its meaning comes
 first, and each hit says which way it was found. Tool output that was never
-chunked still turns up through its words. Blending in the graph comes with
-extraction.
+chunked still turns up through its words. After `chatlore extract`, messages
+that mention an entity matching the query join in as well; see
+[extraction.md](extraction.md).
 The library is the source of truth: if the database is ever deleted or an
 upgrade changes its layout, `chatlore index --rebuild` recreates it.
 
