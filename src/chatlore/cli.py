@@ -19,7 +19,7 @@ from rich.table import Table
 
 from chatlore import __version__
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
-from chatlore.extraction import ExtractionCache
+from chatlore.extraction import ExtractionCache, entity_key
 from chatlore.importers import (
     ImporterError,
     ImportIssue,
@@ -32,16 +32,28 @@ from chatlore.llm import OPENROUTER_KEY_ENV, LLMError, llm_settings, make_llm
 from chatlore.paths import default_home
 from chatlore.pipeline import (
     EmbeddingModelMismatchError,
+    pending_duplicates,
     pending_extractions,
     pending_summaries,
+    pending_topics,
     sync_chunks,
+    sync_duplicates,
     sync_embeddings,
     sync_entities,
     sync_extractions,
     sync_summaries,
+    sync_topics,
 )
 from chatlore.search import hybrid_search
-from chatlore.store import DATABASE_NAME, GraphStore, Label, TextHit, open_store
+from chatlore.store import (
+    DATABASE_NAME,
+    EdgeType,
+    GraphStore,
+    Label,
+    Node,
+    TextHit,
+    open_store,
+)
 
 __all__ = ["app", "default_home", "display_path"]
 
@@ -304,7 +316,11 @@ def extract(
         int, typer.Option("--workers", min=1, help="Requests sent at the same time.")
     ] = 8,
 ) -> None:
-    """Find and summarise entities with a language model. Safe to repeat and to interrupt."""
+    """Build the entity graph and its topics with a language model.
+
+    Reads new chunks for entities and relationships, summarises entities, links
+    duplicates, and writes topic reports. Safe to repeat and to interrupt.
+    """
     home = default_home()
     with open_store(home) as store:
         if store.count_nodes(Label.CHUNK) == 0:
@@ -364,6 +380,38 @@ def extract(
                         table.add_row("unreadable summaries", str(summaries.failed))
                         tokens[0] += summaries.input_tokens
                         tokens[1] += summaries.output_tokens
+
+                        task = progress.add_task(
+                            "Checking possible duplicates",
+                            total=pending_duplicates(store, cache, llm.name),
+                        )
+                        duplicates = sync_duplicates(
+                            store,
+                            llm,
+                            cache,
+                            workers=workers,
+                            on_progress=lambda n: progress.advance(task, n),
+                        )
+                        table.add_row("possible duplicates", str(duplicates.candidates))
+                        table.add_row("same thing, two names", str(duplicates.same))
+                        tokens[0] += duplicates.input_tokens
+                        tokens[1] += duplicates.output_tokens
+
+                        task = progress.add_task(
+                            "Writing topic reports",
+                            total=pending_topics(store, cache, llm.name),
+                        )
+                        topics = sync_topics(
+                            store,
+                            llm,
+                            cache,
+                            workers=workers,
+                            on_progress=lambda n: progress.advance(task, n),
+                        )
+                        table.add_row("topic reports written now", str(topics.reported))
+                        table.add_row("unreadable reports", str(topics.failed))
+                        tokens[0] += topics.input_tokens
+                        tokens[1] += topics.output_tokens
                     except LLMError as error:
                         failure = error
         finally:
@@ -373,11 +421,102 @@ def extract(
         table.add_row("entities", str(graph.entities))
         table.add_row("relationships", str(graph.relationships))
         table.add_row("mentions", str(graph.mentions))
+        table.add_row("topics", str(store.count_nodes(Label.TOPIC)))
     console.print(table)
     if failure is not None:
         console.print(f"[red]{failure}[/red]")
         console.print("Answers received so far are kept; run `chatlore extract` again to resume.")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def topics(
+    words: Annotated[
+        str | None, typer.Argument(help="Only topics that mention these words.")
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="How many topics.")] = 20,
+) -> None:
+    """List the topics found by `chatlore extract`, largest first."""
+    with open_store(default_home()) as store:
+        if store.count_nodes(Label.TOPIC) == 0:
+            console.print("No topics yet. Run `chatlore extract` first.")
+            return
+        if words:
+            found = [
+                store.get_node(hit.node_id)
+                for hit in store.search_text(words, limit=limit, labels=[Label.TOPIC])
+            ]
+            shown = [node for node in found if node is not None]
+        else:
+            shown = sorted(
+                store.find_nodes(Label.TOPIC), key=lambda node: -int(node.props["size"])
+            )[:limit]
+        if not shown:
+            console.print("No topics mention those words.")
+            return
+        for node in shown:
+            entities = ", ".join(str(name) for name in node.props["entities"][:6])
+            console.print(
+                f"[bold]{escape(str(node.props['title']))}[/bold]  "
+                f"[dim]{node.props['size']} entities: {escape(entities)}[/dim]"
+            )
+            console.print(f"  {node.props['summary']}", markup=False, highlight=False)
+
+
+@app.command()
+def entity(
+    name: Annotated[str, typer.Argument(help="The entity's name, or words from it.")],
+) -> None:
+    """Show what the graph knows about an entity and where it was mentioned."""
+    with open_store(default_home()) as store:
+        node = _find_entity(store, name)
+        if node is None:
+            console.print(f"No entity named {escape(name)!r}. Try `chatlore topics` to browse.")
+            return
+        console.print(
+            f"[bold]{escape(str(node.props['name']))}[/bold]  "
+            f"[dim]{node.props['type']} | mentioned in {node.props['mentions']} chunks[/dim]"
+        )
+        console.print(f"  {node.props.get('summary') or ''}", markup=False, highlight=False)
+
+        same = [other for _, other in store.neighbors(node.id, [EdgeType.SAME_AS], "both")]
+        if same:
+            names = ", ".join(str(other.props["name"]) for other in same)
+            console.print(f"[bold]Also called[/bold] {escape(names)}")
+        topic = [other for _, other in store.neighbors(node.id, [EdgeType.IN_TOPIC])]
+        if topic:
+            console.print(f"[bold]Topic[/bold] {escape(str(topic[0].props['title']))}")
+
+        related = sorted(
+            store.neighbors(node.id, [EdgeType.RELATED_TO], "both", limit=1_000_000),
+            key=lambda pair: -int(pair[0].props.get("weight", 0)),
+        )
+        if related:
+            console.print("[bold]Related[/bold]")
+            for edge, other in related[:10]:
+                description = (edge.props.get("descriptions") or [""])[0]
+                console.print(
+                    f"  {other.props['name']}: {description}", markup=False, highlight=False
+                )
+
+        chunks = store.neighbors(node.id, [EdgeType.MENTIONS], "in", limit=1_000_000)
+        conversations = {str(chunk.props.get("conversation_id")): chunk for _, chunk in chunks}
+        console.print("[bold]Mentioned in[/bold]")
+        for conversation_id, chunk in list(conversations.items())[:10]:
+            title = escape(str(chunk.props.get("title") or "(untitled)"))
+            source = chunk.props.get("source")
+            console.print(f"  {title}  [dim]{source} | {conversation_id}[/dim]")
+
+
+def _find_entity(store: GraphStore, name: str) -> Node | None:
+    """The entity with this name, or failing that the best word match."""
+    exact = entity_key(name)
+    hits = store.search_text(name, limit=20, labels=[Label.ENTITY])
+    nodes = [node for hit in hits if (node := store.get_node(hit.node_id)) is not None]
+    for node in nodes:
+        if entity_key(str(node.props["name"])) == exact:
+            return node
+    return nodes[0] if nodes else None
 
 
 def _progress() -> Progress:
@@ -493,7 +632,13 @@ def _hybrid_search(
     for hit in hits:
         title = escape(hit.title or "(untitled)")
         matched = " + ".join(
-            name for name, found in (("words", hit.by_words), ("meaning", hit.by_meaning)) if found
+            name
+            for name, found in (
+                ("words", hit.by_words),
+                ("meaning", hit.by_meaning),
+                ("entities", hit.by_entity),
+            )
+            if found
         )
         console.print(
             f"[bold]{title}[/bold]  [dim]{hit.source} | {hit.conversation_id} | {matched}[/dim]"

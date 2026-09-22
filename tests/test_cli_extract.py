@@ -111,3 +111,29 @@ def test_an_unreachable_model_keeps_what_was_read(
     assert _row(failed.output, "entities") > 0
     assert resumed.exit_code == 0
     assert _row(resumed.output, "chunks read before") == 1
+
+
+def test_topics_and_entities_can_be_browsed(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    before = runner.invoke(app, ["topics"])
+    runner.invoke(app, ["note", "Rust and Cargo and Clippy."])
+    runner.invoke(app, ["note", "Clippy checks Rust."])
+    runner.invoke(app, ["process", "--no-embed"])
+    _use(monkeypatch, FakeLLM())
+    extracted = runner.invoke(app, ["extract"])
+
+    listed = runner.invoke(app, ["topics"])
+    searched = runner.invoke(app, ["topics", "clippy"])
+    missing = runner.invoke(app, ["topics", "zzzz"])
+    shown = runner.invoke(app, ["entity", "clippy"])
+    unknown = runner.invoke(app, ["entity", "nobody"])
+
+    assert "Run `chatlore extract` first" in before.output
+    assert _row(extracted.output, "topics") >= 1
+    assert "About" in listed.output and "Clippy" in listed.output
+    assert "About" in searched.output
+    assert "No topics mention those words" in missing.output
+    assert shown.exit_code == 0
+    assert "Clippy" in shown.output
+    assert "Topic" in shown.output and "Related" in shown.output
+    assert "Mentioned in" in shown.output
+    assert "No entity named 'nobody'" in unknown.output
