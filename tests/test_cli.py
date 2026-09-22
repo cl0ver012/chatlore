@@ -71,7 +71,7 @@ def test_doctor_names_the_model_without_showing_the_key(
 
     present = runner.invoke(app, ["doctor"])
 
-    assert "deepseek/deepseek-v4-flash" in missing.output
+    assert "z-ai/glm-5.3-flash" in missing.output
     assert "set OPENROUTER_API_KEY" in missing.output
     assert "API key set" in present.output
     assert "sk-or-secret" not in present.output
