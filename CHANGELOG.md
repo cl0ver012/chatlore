@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `chatlore search --semantic` finds chunks by meaning and shows a similarity score.
 - Store interface: `nodes_without_embedding`, `count_embeddings`, `clear_embeddings`,
   `get_meta`, `set_meta`.
+- Hybrid search (`chatlore.search`): full-text hits on messages and vector hits on chunks are
+  merged with reciprocal rank fusion, with chunks folded into their message so each message
+  shows once. `chatlore search --hybrid` shows whether a hit matched by words, meaning, or both.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

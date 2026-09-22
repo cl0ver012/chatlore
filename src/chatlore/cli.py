@@ -29,6 +29,7 @@ from chatlore.importers import (
 from chatlore.library import AddOutcome, Library
 from chatlore.paths import default_home
 from chatlore.pipeline import EmbeddingModelMismatchError, sync_chunks, sync_embeddings
+from chatlore.search import hybrid_search
 from chatlore.store import DATABASE_NAME, GraphStore, Label, TextHit, open_store
 
 __all__ = ["app", "default_home", "display_path"]
@@ -289,10 +290,19 @@ def search(
         bool,
         typer.Option("--semantic", help="Match by meaning using embeddings instead of words."),
     ] = False,
+    hybrid: Annotated[
+        bool,
+        typer.Option("--hybrid", help="Rank word matches and meaning matches together."),
+    ] = False,
 ) -> None:
-    """Search every imported message, by words or by meaning."""
+    """Search every imported message, by words, by meaning, or both."""
+    if semantic and hybrid:
+        raise typer.BadParameter("use either --semantic or --hybrid, not both")
     home = default_home()
     with open_store(home) as store:
+        if hybrid:
+            _hybrid_search(store, query, limit, source, home)
+            return
         if semantic:
             _semantic_search(store, query, limit, source, home)
             return
@@ -349,6 +359,33 @@ def _semantic_search(
             break
     if shown == 0:
         console.print("No matches.")
+
+
+def _hybrid_search(
+    store: GraphStore, query: str, limit: int, sources: list[str] | None, home: Path
+) -> None:
+    if store.count_embeddings() == 0:
+        console.print("No embeddings yet. Run `chatlore process` first.")
+        return
+    try:
+        vector = normalise(make_embedder(home).embed_query(query))
+    except EmbeddingError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    hits = hybrid_search(store, query, vector, limit=limit, sources=sources)
+    if not hits:
+        console.print("No matches.")
+        return
+    for hit in hits:
+        title = escape(hit.title or "(untitled)")
+        matched = " + ".join(
+            name for name, found in (("words", hit.by_words), ("meaning", hit.by_meaning)) if found
+        )
+        console.print(
+            f"[bold]{title}[/bold]  [dim]{hit.source} | {hit.conversation_id} | {matched}[/dim]"
+        )
+        console.print(f"  {_excerpt(hit.snippet)}", markup=False, highlight=False)
 
 
 def _excerpt(text: str, length: int = 220) -> str:
