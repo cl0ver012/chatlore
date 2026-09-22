@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relationships between them, and a link from every chunk to the entities it mentions. Answers
   are cached by model, prompt version, and text, so repeated and interrupted runs only read new
   text and a rebuilt database costs no model calls. Guide in `docs/extraction.md`.
+- Entities mentioned more than once get a summary of at most 50 words, cached so it is written
+  once. Names that differ only in case, spacing, hyphens, trailing punctuation, or a plural "s"
+  are one entity, and invented types such as company or city count as the suggested ones.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

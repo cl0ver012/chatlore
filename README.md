@@ -61,7 +61,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
 | M3 | Chunking, embeddings, hybrid search | done |
-| M4 | Entity, topic, and fact extraction with provenance | entity extraction done, merging and topics next |
+| M4 | Entity, topic, and fact extraction with provenance | entities extracted and summarised, topics next |
 | M5 | REST API with streaming chat | planned |
 | M6 | Web UI: conversations, graph explorer, chat | planned |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | planned |
