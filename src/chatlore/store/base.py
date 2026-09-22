@@ -43,6 +43,7 @@ class EdgeType(StrEnum):
     SUPERSEDES = "SUPERSEDES"
     RELATED_TO = "RELATED_TO"
     SAME_AS = "SAME_AS"
+    IN_TOPIC = "IN_TOPIC"
 
 
 Direction = Literal["out", "in", "both"]

@@ -62,3 +62,8 @@ def entity_id(key: str) -> str:
     same entity found in two chunks becomes one node.
     """
     return f"ent_{_short_digest(key)}"
+
+
+def topic_id(key: str) -> str:
+    """Return the stable id of a topic from the key of the entities in it."""
+    return f"topic_{_short_digest(key)}"
