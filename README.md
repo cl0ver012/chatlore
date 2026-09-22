@@ -8,8 +8,9 @@
 
 **Status: pre-alpha.** Importing and search work today: ChatGPT, Claude, Gemini,
 and Markdown exports land in a local library and a SQLite graph store you can
-search from the terminal by words, by meaning, or both. The knowledge graph and
-chat are next. The roadmap below shows the order.
+search from the terminal by words, by meaning, or both. A language model turns
+them into a knowledge graph of entities, relationships, and topics that you can
+browse and search. Chat is next. The roadmap below shows the order.
 
 ## Try it
 
@@ -23,6 +24,8 @@ uv run chatlore process                                  # chunk and embed, loca
 uv run chatlore search "why was my query slow" --semantic
 uv run chatlore search "slow postgres query" --hybrid     # words and meaning together
 uv run chatlore extract --limit 50                        # entities, needs a model key
+uv run chatlore topics                                    # what the conversations are about
+uv run chatlore entity "postgres"                         # one entity and where it came up
 uv run chatlore stats
 ```
 
@@ -30,7 +33,7 @@ The source is detected from the file. Importing is idempotent, so re-running it
 after a fresh export only adds what changed. How to get each export, what is
 kept, and the known limits are in [docs/importers.md](docs/importers.md).
 Extraction and chat will use any OpenAI-compatible model, OpenRouter by default;
-see [docs/models.md](docs/models.md). Extraction is described in
+see [docs/models.md](docs/models.md). The knowledge graph is described in
 [docs/extraction.md](docs/extraction.md).
 
 ## What ChatLore will do
@@ -61,7 +64,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
 | M3 | Chunking, embeddings, hybrid search | done |
-| M4 | Entity, topic, and fact extraction with provenance | entities extracted and summarised, topics next |
+| M4 | Entity, topic, and fact extraction with provenance | entities and topics done; facts later |
 | M5 | REST API with streaming chat | planned |
 | M6 | Web UI: conversations, graph explorer, chat | planned |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | planned |
