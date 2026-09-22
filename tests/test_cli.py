@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from chatlore import __version__
-from chatlore.cli import app, default_home
+from chatlore.cli import app, default_home, load_env_file, run
 
 runner = CliRunner()
 
@@ -82,3 +83,76 @@ def test_display_path_shortens_the_home_directory(tmp_path: Path) -> None:
 
     assert display_path(Path.home() / ".chatlore" / "x") == "~/.chatlore/x"
     assert display_path(tmp_path) == str(tmp_path) or display_path(tmp_path).startswith("~/")
+
+
+@pytest.fixture
+def env_file_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset the variables these tests read, and restore them afterwards.
+
+    load_dotenv writes straight into os.environ, so each variable is set once
+    through monkeypatch first; that way teardown removes whatever a test loaded.
+    """
+    for name in ("OPENROUTER_API_KEY", "CHATLORE_LLM_MODEL"):
+        monkeypatch.setenv(name, "placeholder")
+        monkeypatch.delenv(name)
+
+
+@pytest.mark.usefixtures("env_file_variables")
+def test_env_file_fills_in_missing_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or-from-file\n", encoding="utf-8")
+    nested = tmp_path / "some" / "folder"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+
+    load_env_file()
+
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-from-file"
+
+
+@pytest.mark.usefixtures("env_file_variables")
+def test_the_environment_wins_over_the_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".env").write_text(
+        "OPENROUTER_API_KEY=sk-or-from-file\nCHATLORE_LLM_MODEL=from-file\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CHATLORE_LLM_MODEL", "from-shell")
+
+    load_env_file()
+
+    assert os.environ["CHATLORE_LLM_MODEL"] == "from-shell"
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-or-from-file"
+
+
+@pytest.mark.usefixtures("env_file_variables")
+def test_no_env_file_is_fine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("chatlore.cli.find_dotenv", lambda usecwd: "")
+
+    load_env_file()
+
+    assert "OPENROUTER_API_KEY" not in os.environ
+
+
+@pytest.mark.usefixtures("env_file_variables")
+def test_the_chatlore_command_reads_the_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or-from-file\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CHATLORE_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("COLUMNS", "200")
+    for name in ("CHATLORE_LLM_BASE_URL", "CHATLORE_LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("sys.argv", ["chatlore", "doctor"])
+
+    with pytest.raises(SystemExit) as exited:
+        run()
+
+    output = capsys.readouterr().out
+    assert exited.value.code == 0
+    assert "API key set" in output
+    assert "sk-or-from-file" not in output
