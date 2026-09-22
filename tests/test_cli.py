@@ -57,6 +57,26 @@ def test_doctor_reports_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert "exists" in result.output
 
 
+def test_doctor_names_the_model_without_showing_the_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CHATLORE_HOME", str(tmp_path))
+    monkeypatch.delenv("CHATLORE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("CHATLORE_LLM_MODEL", raising=False)
+    monkeypatch.delenv("CHATLORE_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("COLUMNS", "200")
+    missing = runner.invoke(app, ["doctor"])
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-secret")
+
+    present = runner.invoke(app, ["doctor"])
+
+    assert "z-ai/glm-5.3-flash" in missing.output
+    assert "set OPENROUTER_API_KEY" in missing.output
+    assert "API key set" in present.output
+    assert "sk-or-secret" not in present.output
+
+
 def test_display_path_shortens_the_home_directory(tmp_path: Path) -> None:
     from chatlore.cli import display_path
 

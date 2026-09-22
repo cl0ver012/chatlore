@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hybrid search (`chatlore.search`): full-text hits on messages and vector hits on chunks are
   merged with reciprocal rank fusion, with chunks folded into their message so each message
   shows once. `chatlore search --hybrid` shows whether a hit matched by words, meaning, or both.
+- Language model client (`chatlore.llm`) for any OpenAI-compatible chat API. OpenRouter with
+  `z-ai/glm-5.3-flash` is the default; Ollama, vLLM, and other local servers work by setting
+  `CHATLORE_LLM_BASE_URL`. `chatlore doctor` shows the configured model and whether a key is
+  set. Model guide in `docs/models.md`.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

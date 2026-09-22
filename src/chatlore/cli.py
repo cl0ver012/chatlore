@@ -27,6 +27,7 @@ from chatlore.importers import (
     make_note,
 )
 from chatlore.library import AddOutcome, Library
+from chatlore.llm import OPENROUTER_KEY_ENV, llm_settings
 from chatlore.paths import default_home
 from chatlore.pipeline import EmbeddingModelMismatchError, sync_chunks, sync_embeddings
 from chatlore.search import hybrid_search
@@ -87,7 +88,20 @@ def doctor() -> None:
     table.add_row("python", f"{platform.python_version()} ({sys.executable})")
     table.add_row("platform", platform.platform())
     table.add_row("data dir", f"{display_path(home)} ({state})")
+    table.add_row("model", _describe_llm())
     console.print(table)
+
+
+def _describe_llm() -> str:
+    """Name the configured model and whether it has a key, without showing the key."""
+    settings = llm_settings()
+    if settings.api_key is not None:
+        key = "API key set"
+    elif settings.is_openrouter:
+        key = f"no API key, set {OPENROUTER_KEY_ENV}"
+    else:
+        key = "no API key needed"
+    return f"{settings.model} via {settings.base_url} ({key})"
 
 
 @app.command("import")
