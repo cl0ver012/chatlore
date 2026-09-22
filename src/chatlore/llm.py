@@ -38,6 +38,14 @@ class LLMError(Exception):
     """The model could not be reached or did not return a usable answer."""
 
 
+class LLMAnswerError(LLMError):
+    """The model answered, but the answer cannot be used: empty or cut off.
+
+    Unlike an unreachable server, this can happen to one request among many, so
+    callers working through a batch may skip it and ask again later.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
     """One turn of a conversation with the model."""
@@ -143,13 +151,13 @@ class OpenAICompatibleLLM:
             raise LLMError(f"could not reach {self.base_url}: {error}") from error
 
         if not response.choices:
-            raise LLMError(f"{self.name} returned no answer")
+            raise LLMAnswerError(f"{self.name} returned no answer")
         choice = response.choices[0]
         if choice.finish_reason == "length":
-            raise LLMError(f"{self.name} stopped at the token limit before finishing")
+            raise LLMAnswerError(f"{self.name} stopped at the token limit before finishing")
         text = choice.message.content or ""
         if not text.strip():
-            raise LLMError(f"{self.name} returned an empty answer")
+            raise LLMAnswerError(f"{self.name} returned an empty answer")
         usage = response.usage
         return Completion(
             text=text,

@@ -13,6 +13,7 @@ from chatlore.llm import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
     ChatMessage,
+    LLMAnswerError,
     LLMError,
     OpenAICompatibleLLM,
     llm_settings,
@@ -194,3 +195,24 @@ def test_the_chatlore_key_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHATLORE_LLM_API_KEY", "sk-chatlore")
 
     assert llm_settings().api_key == "sk-chatlore"
+
+
+@pytest.mark.parametrize(
+    ("response", "retryable"),
+    [
+        (httpx2.Response(200, json=_answer("cut off", "length")), True),
+        (httpx2.Response(200, json=_answer("")), True),
+        (httpx2.Response(401, json={"error": {"message": "No auth"}}), False),
+    ],
+)
+def test_answers_the_model_gave_but_cannot_be_used_are_told_apart(
+    make_client: Callable[[Handler], OpenAICompatibleLLM],
+    response: httpx2.Response,
+    retryable: bool,
+) -> None:
+    client = make_client(lambda request: response)
+
+    with pytest.raises(LLMError) as raised:
+        client.complete([ChatMessage("user", "Hello")])
+
+    assert isinstance(raised.value, LLMAnswerError) is retryable
