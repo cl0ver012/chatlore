@@ -11,8 +11,7 @@ chatlore doctor   # shows the configured model and whether a key is set
 ## OpenRouter (the default)
 
 [OpenRouter](https://openrouter.ai) serves many open models, most of them
-inexpensive, behind one API key. The default model is
-`deepseek/deepseek-v4-flash`.
+inexpensive, behind one API key. The default model is `z-ai/glm-5.3-flash`.
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
@@ -34,7 +33,7 @@ export CHATLORE_LLM_MODEL=qwen3:8b
 | Variable | Default | Meaning |
 |---|---|---|
 | `CHATLORE_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | Where the OpenAI-compatible API lives |
-| `CHATLORE_LLM_MODEL` | `deepseek/deepseek-v4-flash` | Model id as that server names it |
+| `CHATLORE_LLM_MODEL` | `z-ai/glm-5.3-flash` | Model id as that server names it |
 | `CHATLORE_LLM_API_KEY` | none | Key for the server; wins over `OPENROUTER_API_KEY` |
 | `OPENROUTER_API_KEY` | none | Used only when the base URL is OpenRouter |
 
