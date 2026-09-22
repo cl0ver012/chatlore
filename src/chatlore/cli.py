@@ -19,6 +19,7 @@ from rich.table import Table
 
 from chatlore import __version__
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
+from chatlore.extraction import ExtractionCache
 from chatlore.importers import (
     ImporterError,
     ImportIssue,
@@ -27,9 +28,16 @@ from chatlore.importers import (
     make_note,
 )
 from chatlore.library import AddOutcome, Library
-from chatlore.llm import OPENROUTER_KEY_ENV, llm_settings
+from chatlore.llm import OPENROUTER_KEY_ENV, LLMError, llm_settings, make_llm
 from chatlore.paths import default_home
-from chatlore.pipeline import EmbeddingModelMismatchError, sync_chunks, sync_embeddings
+from chatlore.pipeline import (
+    EmbeddingModelMismatchError,
+    pending_extractions,
+    sync_chunks,
+    sync_embeddings,
+    sync_entities,
+    sync_extractions,
+)
 from chatlore.search import hybrid_search
 from chatlore.store import DATABASE_NAME, GraphStore, Label, TextHit, open_store
 
@@ -279,6 +287,75 @@ def process(
             table.add_row("embeddings from cache", str(report.from_cache))
             table.add_row("embeddings total", str(report.total))
     console.print(table)
+
+
+@app.command()
+def extract(
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Read at most this many new chunks, e.g. to try a model."),
+    ] = None,
+    batch_size: Annotated[
+        int, typer.Option("--batch-size", min=1, help="Chunks sent in one request.")
+    ] = 4,
+    workers: Annotated[
+        int, typer.Option("--workers", min=1, help="Requests sent at the same time.")
+    ] = 4,
+) -> None:
+    """Find entities and relationships with a language model. Safe to repeat and to interrupt."""
+    home = default_home()
+    with open_store(home) as store:
+        if store.count_nodes(Label.CHUNK) == 0:
+            console.print("No chunks yet. Run `chatlore process` first.")
+            return
+        try:
+            llm = make_llm()
+        except LLMError as error:
+            console.print(f"[red]{error}[/red]")
+            raise typer.Exit(code=1) from error
+
+        table = Table(title="extraction", show_header=False)
+        table.add_column("key", style="bold")
+        table.add_column("value", justify="right")
+        table.add_row("model", llm.name)
+        failure: LLMError | None = None
+        try:
+            with (
+                ExtractionCache(home / "cache" / "extractions.db") as cache,
+                _progress() as progress,
+            ):
+                pending = len(pending_extractions(store, cache, llm.name))
+                total = pending if limit is None else min(pending, limit)
+                task = progress.add_task(f"Reading chunks with {llm.name}", total=total)
+                try:
+                    report = sync_extractions(
+                        store,
+                        llm,
+                        cache,
+                        batch_size=batch_size,
+                        workers=workers,
+                        limit=limit,
+                        on_progress=lambda n: progress.advance(task, n),
+                    )
+                    table.add_row("chunks read now", str(report.extracted))
+                    table.add_row("chunks read before", str(report.already_done))
+                    table.add_row("unreadable answers", str(report.failed))
+                    table.add_row("tokens in", str(report.input_tokens))
+                    table.add_row("tokens out", str(report.output_tokens))
+                except LLMError as error:
+                    failure = error
+                # Assemble whatever has been read, even after a failure.
+                graph = sync_entities(store, cache, llm.name)
+        finally:
+            llm.close()
+        table.add_row("entities", str(graph.entities))
+        table.add_row("relationships", str(graph.relationships))
+        table.add_row("mentions", str(graph.mentions))
+    console.print(table)
+    if failure is not None:
+        console.print(f"[red]{failure}[/red]")
+        console.print("Answers received so far are kept; run `chatlore extract` again to resume.")
+        raise typer.Exit(code=1)
 
 
 def _progress() -> Progress:
