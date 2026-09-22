@@ -9,7 +9,7 @@ import re
 import threading
 from collections.abc import Sequence
 
-from chatlore.llm import ChatMessage, Completion, LLMError
+from chatlore.llm import ChatMessage, Completion, LLMAnswerError, LLMError
 
 DIMENSION = 32
 
@@ -43,12 +43,15 @@ class FakeEmbedder:
 
 
 class FakeLLM:
-    """Answers extraction requests from the passages it is sent, without a model.
+    """Answers every kind of ChatLore request from what it is sent, without a model.
 
-    Capitalised words become entities and consecutive entities in a passage are
-    related, so tests can predict the graph from the text. A summary joins an
-    entity's descriptions. It records extraction and summary requests separately,
-    and can return an unreadable answer or fail outright on chosen requests.
+    Extraction: capitalised words become entities and consecutive entities in a
+    passage are related, so tests can predict the graph from the text. Summary:
+    an entity's descriptions joined. Duplicates: two names are the same when one
+    starts with the other, ignoring case. Topic report: titled after its first
+    entity. Each kind of request is recorded separately, and any request, counted
+    across all kinds, can be made to return an unreadable answer, an empty one,
+    or to fail as if the model were unreachable.
     """
 
     def __init__(
@@ -56,12 +59,17 @@ class FakeLLM:
         name: str = "fake-llm",
         broken_requests: Sequence[int] = (),
         fail_on_request: int | None = None,
+        empty_requests: Sequence[int] = (),
     ) -> None:
         self.name = name
         self.requests: list[list[str]] = []
         self.summary_requests: list[list[str]] = []
+        self.duplicate_requests: list[list[tuple[str, str]]] = []
+        self.report_requests: list[list[str]] = []
         self._broken = set(broken_requests)
+        self._empty = set(empty_requests)
         self._fail_on = fail_on_request
+        self._calls = 0
         self._lock = threading.Lock()
 
     def complete(
@@ -71,17 +79,30 @@ class FakeLLM:
         json_output: bool = False,
         max_tokens: int | None = None,
     ) -> Completion:
-        if messages[-1].content.startswith("### Entity"):
-            return self._summaries(messages[-1].content)
-        passages = re.split(r"^### Passage \d+\n", messages[-1].content, flags=re.MULTILINE)[1:]
-        passages = [passage.strip() for passage in passages]
+        content = messages[-1].content
         with self._lock:
-            self.requests.append(passages)
-            number = len(self.requests) + len(self.summary_requests)
+            self._calls += 1
+            number = self._calls
+            if content.startswith("### Entity "):
+                answer = self._summaries(content)
+            elif content.startswith("### Pair "):
+                answer = self._duplicates(content)
+            elif content.startswith("### Entities"):
+                answer = self._report(content)
+            else:
+                answer = self._extraction(content)
         if number == self._fail_on:
             raise LLMError("fake model is unreachable")
+        if number in self._empty:
+            raise LLMAnswerError("fake model returned an empty answer")
         if number in self._broken:
             return Completion("this is not JSON", self.name, 10, 5)
+        return answer
+
+    def _extraction(self, content: str) -> Completion:
+        passages = re.split(r"^### Passage \d+\n", content, flags=re.MULTILINE)[1:]
+        passages = [passage.strip() for passage in passages]
+        self.requests.append(passages)
         answer = {
             "passages": [
                 self._passage(index, passage) for index, passage in enumerate(passages, start=1)
@@ -91,14 +112,7 @@ class FakeLLM:
 
     def _summaries(self, content: str) -> Completion:
         blocks = re.split(r"^### Entity \d+: ", content, flags=re.MULTILINE)[1:]
-        names = [block.split(" (", 1)[0] for block in blocks]
-        with self._lock:
-            self.summary_requests.append(names)
-            number = len(self.requests) + len(self.summary_requests)
-        if number == self._fail_on:
-            raise LLMError("fake model is unreachable")
-        if number in self._broken:
-            return Completion("this is not JSON", self.name, 10, 5)
+        self.summary_requests.append([block.split(" (", 1)[0] for block in blocks])
         summaries = [
             {
                 "entity": index,
@@ -109,6 +123,37 @@ class FakeLLM:
             for index, block in enumerate(blocks, start=1)
         ]
         return Completion(json.dumps({"summaries": summaries}), self.name, 5, 5)
+
+    def _duplicates(self, content: str) -> Completion:
+        blocks = re.split(r"^### Pair \d+\n", content, flags=re.MULTILINE)[1:]
+        pairs = []
+        for block in blocks:
+            first, second = (line[2:].split(" (", 1)[0] for line in block.strip().splitlines())
+            pairs.append((first, second))
+        self.duplicate_requests.append(pairs)
+        verdicts = [
+            {
+                "pair": index,
+                "same": first.lower().startswith(second.lower())
+                or second.lower().startswith(first.lower()),
+            }
+            for index, (first, second) in enumerate(pairs, start=1)
+        ]
+        return Completion(json.dumps({"pairs": verdicts}), self.name, 5, 5)
+
+    def _report(self, content: str) -> Completion:
+        names = [
+            line[2:].split(" (", 1)[0]
+            for line in content.split("### Relationships")[0].splitlines()
+            if line.startswith("- ") and " (" in line
+        ]
+        self.report_requests.append(names)
+        report = {
+            "title": f"About {names[0]}",
+            "summary": f"A topic with {', '.join(names)}.",
+            "findings": [f"{name} is part of it." for name in names],
+        }
+        return Completion(json.dumps(report), self.name, 5, 5)
 
     @staticmethod
     def _passage(index: int, text: str) -> dict[str, object]:

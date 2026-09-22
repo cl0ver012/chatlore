@@ -10,7 +10,9 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from dataclasses import dataclass, field
+from typing import Any
 
 from chatlore.chunking import (
     DEFAULT_MAX_TOKENS,
@@ -19,21 +21,36 @@ from chatlore.chunking import (
 )
 from chatlore.embeddings import Embedder, EmbeddingCache, normalise, text_hash
 from chatlore.extraction import (
+    EntityCard,
     EntityToSummarise,
+    Extraction,
     ExtractionCache,
     ExtractionError,
     canonical_type,
+    duplicate_candidates,
+    duplicate_messages,
     entity_key,
     extraction_messages,
+    pair_key,
+    parse_duplicates,
     parse_extractions,
     parse_summaries,
     summary_messages,
 )
-from chatlore.ids import entity_id
-from chatlore.llm import LLM, ChatMessage, Completion
+from chatlore.ids import content_hash, entity_id, topic_id
+from chatlore.llm import LLM, ChatMessage, Completion, LLMAnswerError
 from chatlore.models import Conversation
 from chatlore.store import Edge, EdgeType, GraphStore, Label, Node
 from chatlore.store.mapping import chunks_to_graph
+from chatlore.topics import (
+    REPORT_PROMPT_VERSION,
+    Link,
+    Member,
+    TopicReport,
+    find_topics,
+    parse_report,
+    report_messages,
+)
 
 
 @dataclass(slots=True)
@@ -184,11 +201,13 @@ def _answers[T](
     batches: Sequence[list[T]],
     messages: Callable[[list[T]], list[ChatMessage]],
     workers: int,
-) -> Iterator[tuple[list[T], Completion]]:
+) -> Iterator[tuple[list[T], Completion | None]]:
     """Send one JSON request per batch, several at once, yielding answers as they arrive.
 
-    ``LLMError`` from any request is raised to the caller, and requests that have
-    not started yet are cancelled.
+    An answer the model gave but that cannot be used, such as an empty one, comes
+    back as ``None`` so the caller can skip the batch and ask again next run. Any
+    other ``LLMError``, such as an unreachable server, is raised to the caller,
+    and requests that have not started yet are cancelled.
     """
     executor = ThreadPoolExecutor(max_workers=max(1, workers))
     try:
@@ -197,7 +216,11 @@ def _answers[T](
             for batch in batches
         }
         for future in as_completed(futures):
-            yield futures[future], future.result()
+            try:
+                completion: Completion | None = future.result()
+            except LLMAnswerError:
+                completion = None
+            yield futures[future], completion
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
 
@@ -237,12 +260,12 @@ def sync_extractions(
         return extraction_messages([str(node.props.get("text", "")) for node in batch])
 
     for batch, completion in _answers(llm, _batches(pending, batch_size), messages, workers):
-        report.input_tokens += completion.input_tokens
-        report.output_tokens += completion.output_tokens
-        try:
-            found = parse_extractions(completion.text, len(batch))
-        except ExtractionError:
-            found = [None] * len(batch)
+        found: list[Extraction | None] = [None] * len(batch)
+        if completion is not None:
+            report.input_tokens += completion.input_tokens
+            report.output_tokens += completion.output_tokens
+            with suppress(ExtractionError):
+                found = parse_extractions(completion.text, len(batch))
         fresh = {
             text_hash(str(node.props.get("text", ""))): extraction
             for node, extraction in zip(batch, found, strict=True)
@@ -286,6 +309,18 @@ def _to_summarise(node: Node) -> EntityToSummarise:
         str(node.props.get("type", "")),
         tuple(str(description) for description in node.props.get("descriptions", [])),
     )
+
+
+def _searchable(props: dict[str, Any]) -> dict[str, str]:
+    """The title and text full-text search reads for an entity: its name and summary."""
+    descriptions = props.get("descriptions") or [""]
+    summary = props.get("summary") or descriptions[0]
+    return {"title": str(props["name"]), "text": f"{props['name']}: {summary}"}
+
+
+def _with_summary(props: dict[str, Any], summary: str) -> dict[str, Any]:
+    updated = {**props, "summary": summary}
+    return {**updated, **_searchable(updated)}
 
 
 def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> EntityReport:
@@ -351,6 +386,7 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
             node.props["summary"] = summaries.get(_to_summarise(node).key)
         else:
             node.props["summary"] = ""
+        node.props.update(_searchable(node.props))
     mentions = [
         Edge(chunk_id, EdgeType.MENTIONS, entity_id(key))
         for key, draft in sorted(entities.items())
@@ -414,19 +450,232 @@ def sync_summaries(
         return summary_messages([_to_summarise(node) for node in batch])
 
     for batch, completion in _answers(llm, _batches(pending, batch_size), messages, workers):
-        report.input_tokens += completion.input_tokens
-        report.output_tokens += completion.output_tokens
-        try:
-            found = parse_summaries(completion.text, len(batch))
-        except ExtractionError:
-            found = [None] * len(batch)
+        found: list[str | None] = [None] * len(batch)
+        if completion is not None:
+            report.input_tokens += completion.input_tokens
+            report.output_tokens += completion.output_tokens
+            with suppress(ExtractionError):
+                found = parse_summaries(completion.text, len(batch))
         written = [(node, text) for node, text in zip(batch, found, strict=True) if text]
         cache.put_summaries(llm.name, {_to_summarise(node).key: text for node, text in written})
         store.upsert_nodes(
-            Node(node.id, node.label, {**node.props, "summary": text}) for node, text in written
+            Node(node.id, node.label, _with_summary(node.props, text)) for node, text in written
         )
         report.summarised += len(written)
         report.failed += len(batch) - len(written)
         if on_progress is not None:
             on_progress(len(batch))
+    return report
+
+
+@dataclass(slots=True)
+class DuplicateReport:
+    """What a duplicate check did."""
+
+    candidates: int = 0
+    asked: int = 0
+    same: int = 0
+    failed: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+def _card(node: Node) -> EntityCard:
+    descriptions = node.props.get("descriptions") or [""]
+    summary = node.props.get("summary") or descriptions[0]
+    return EntityCard(str(node.props["name"]), str(node.props["type"]), str(summary))
+
+
+def _duplicate_state(
+    store: GraphStore, cache: ExtractionCache, model: str
+) -> tuple[dict[str, Node], list[tuple[str, str]], dict[tuple[str, str], str], dict[str, bool]]:
+    by_key = {entity_key(str(node.props["name"])): node for node in store.find_nodes(Label.ENTITY)}
+    pairs = duplicate_candidates(by_key)
+    keys = {pair: pair_key(*pair) for pair in pairs}
+    return by_key, pairs, keys, cache.get_verdicts(model, sorted(set(keys.values())))
+
+
+def pending_duplicates(store: GraphStore, cache: ExtractionCache, model: str) -> int:
+    """How many possible duplicates ``model`` has not judged yet."""
+    _, pairs, keys, verdicts = _duplicate_state(store, cache, model)
+    return sum(keys[pair] not in verdicts for pair in pairs)
+
+
+def sync_duplicates(
+    store: GraphStore,
+    llm: LLM,
+    cache: ExtractionCache,
+    batch_size: int = 20,
+    workers: int = 8,
+    on_progress: Callable[[int], None] | None = None,
+) -> DuplicateReport:
+    """Link entities that are the same thing under two names with ``SAME_AS``.
+
+    Run after ``sync_entities`` and ``sync_summaries``. Possible duplicates come
+    from ``duplicate_candidates``; the model judges each pair it has not judged
+    before, and verdicts are cached, so a rebuilt graph gets its links back
+    without model calls. Nothing is deleted: both entities stay, joined by the
+    link, and topics treat them as one.
+    """
+    by_key, pairs, keys, verdicts = _duplicate_state(store, cache, llm.name)
+    report = DuplicateReport(candidates=len(pairs))
+    pending = [pair for pair in pairs if keys[pair] not in verdicts]
+
+    def messages(batch: list[tuple[str, str]]) -> list[ChatMessage]:
+        return duplicate_messages([(_card(by_key[a]), _card(by_key[b])) for a, b in batch])
+
+    for batch, completion in _answers(llm, _batches(pending, batch_size), messages, workers):
+        found: list[bool | None] = [None] * len(batch)
+        if completion is not None:
+            report.input_tokens += completion.input_tokens
+            report.output_tokens += completion.output_tokens
+            with suppress(ExtractionError):
+                found = parse_duplicates(completion.text, len(batch))
+        fresh = {
+            keys[pair]: same for pair, same in zip(batch, found, strict=True) if same is not None
+        }
+        cache.put_verdicts(llm.name, fresh)
+        verdicts.update(fresh)
+        report.asked += len(fresh)
+        report.failed += len(batch) - len(fresh)
+        if on_progress is not None:
+            on_progress(len(batch))
+
+    same = [pair for pair in pairs if verdicts.get(keys[pair])]
+    store.upsert_edges(Edge(by_key[a].id, EdgeType.SAME_AS, by_key[b].id) for a, b in same)
+    report.same = len(same)
+    return report
+
+
+@dataclass(slots=True)
+class TopicsReport:
+    """What a topic run did."""
+
+    topics: int = 0
+    reported: int = 0
+    failed: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+@dataclass(slots=True)
+class _TopicState:
+    entities: dict[str, Node]
+    links: list[tuple[str, str, int, str]]
+    groups: list[list[str]]
+    keys: list[str]
+    reports: dict[str, str]
+
+
+def _topic_state(store: GraphStore, cache: ExtractionCache, model: str) -> _TopicState:
+    entities = {node.id: node for node in store.find_nodes(Label.ENTITY)}
+    links: list[tuple[str, str, int, str]] = []
+    same: list[tuple[str, str]] = []
+    for node_id in sorted(entities):
+        for edge, other in store.neighbors(
+            node_id, [EdgeType.RELATED_TO, EdgeType.SAME_AS], limit=1_000_000
+        ):
+            if edge.type == EdgeType.SAME_AS:
+                same.append((node_id, other.id))
+            else:
+                descriptions = edge.props.get("descriptions") or [""]
+                links.append((node_id, other.id, int(edge.props.get("weight", 1)), descriptions[0]))
+    groups = find_topics(entities, [(s, t, w) for s, t, w, _ in links], same)
+    keys = [
+        content_hash(sorted(entity_key(str(entities[i].props["name"])) for i in group))
+        for group in groups
+    ]
+    reports = cache.get_reports(model, REPORT_PROMPT_VERSION, keys)
+    return _TopicState(entities, links, groups, keys, reports)
+
+
+def pending_topics(store: GraphStore, cache: ExtractionCache, model: str) -> int:
+    """How many topics have no report from ``model`` yet."""
+    state = _topic_state(store, cache, model)
+    return sum(key not in state.reports for key in state.keys)
+
+
+def sync_topics(
+    store: GraphStore,
+    llm: LLM,
+    cache: ExtractionCache,
+    workers: int = 8,
+    on_progress: Callable[[int], None] | None = None,
+) -> TopicsReport:
+    """Group entities into topics and give each a report.
+
+    Run last, after ``sync_duplicates``. Topics are found again on every run and
+    replace the old ones; a topic whose entities are the same as before keeps its
+    cached report, and the model writes one for each new or changed topic. A topic
+    whose report could not be read is left out and asked again next run. Each
+    entity in a topic links to it with ``IN_TOPIC``.
+    """
+    state = _topic_state(store, cache, llm.name)
+    report = TopicsReport()
+    pending = [index for index, key in enumerate(state.keys) if key not in state.reports]
+
+    def messages(batch: list[int]) -> list[ChatMessage]:
+        group = set(state.groups[batch[0]])
+        members = [
+            Member(card.name, card.type, card.summary, int(state.entities[i].props["mentions"]))
+            for i in sorted(group)
+            for card in [_card(state.entities[i])]
+        ]
+        links = [
+            Link(
+                str(state.entities[source].props["name"]),
+                str(state.entities[target].props["name"]),
+                description,
+                weight,
+            )
+            for source, target, weight, description in state.links
+            if source in group and target in group
+        ]
+        return report_messages(members, links)
+
+    for batch, completion in _answers(llm, [[index] for index in pending], messages, workers):
+        key = state.keys[batch[0]]
+        if completion is not None:
+            report.input_tokens += completion.input_tokens
+            report.output_tokens += completion.output_tokens
+            with suppress(ExtractionError):
+                written = parse_report(completion.text).to_json()
+                cache.put_reports(llm.name, REPORT_PROMPT_VERSION, {key: written})
+                state.reports[key] = written
+                report.reported += 1
+        report.failed += key not in state.reports
+        if on_progress is not None:
+            on_progress(1)
+
+    nodes: list[Node] = []
+    members: list[Edge] = []
+    for group, key in zip(state.groups, state.keys, strict=True):
+        if key not in state.reports:
+            continue
+        topic = TopicReport.from_json(state.reports[key])
+        node_id = topic_id(key)
+        names = sorted(
+            (state.entities[i] for i in group), key=lambda node: -int(node.props["mentions"])
+        )
+        nodes.append(
+            Node(
+                node_id,
+                Label.TOPIC,
+                {
+                    "title": topic.title,
+                    "summary": topic.summary,
+                    "findings": list(topic.findings),
+                    "size": len(group),
+                    "entities": [str(node.props["name"]) for node in names],
+                    "text": topic.text,
+                    "model": llm.name,
+                },
+            )
+        )
+        members += [Edge(entity, EdgeType.IN_TOPIC, node_id) for entity in group]
+    with store.transaction():
+        store.delete_nodes(node.id for node in store.find_nodes(Label.TOPIC))
+        store.upsert_nodes(nodes)
+        store.upsert_edges(members)
+    report.topics = len(nodes)
     return report
