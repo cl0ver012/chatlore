@@ -8,7 +8,7 @@ such as embeddings are never recomputed without a reason.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -19,14 +19,18 @@ from chatlore.chunking import (
 )
 from chatlore.embeddings import Embedder, EmbeddingCache, normalise, text_hash
 from chatlore.extraction import (
+    EntityToSummarise,
     ExtractionCache,
     ExtractionError,
+    canonical_type,
     entity_key,
     extraction_messages,
     parse_extractions,
+    parse_summaries,
+    summary_messages,
 )
 from chatlore.ids import entity_id
-from chatlore.llm import LLM, Completion
+from chatlore.llm import LLM, ChatMessage, Completion
 from chatlore.models import Conversation
 from chatlore.store import Edge, EdgeType, GraphStore, Label, Node
 from chatlore.store.mapping import chunks_to_graph
@@ -175,12 +179,39 @@ def pending_extractions(store: GraphStore, cache: ExtractionCache, model: str) -
     return list(pending.values())
 
 
+def _answers[T](
+    llm: LLM,
+    batches: Sequence[list[T]],
+    messages: Callable[[list[T]], list[ChatMessage]],
+    workers: int,
+) -> Iterator[tuple[list[T], Completion]]:
+    """Send one JSON request per batch, several at once, yielding answers as they arrive.
+
+    ``LLMError`` from any request is raised to the caller, and requests that have
+    not started yet are cancelled.
+    """
+    executor = ThreadPoolExecutor(max_workers=max(1, workers))
+    try:
+        futures = {
+            executor.submit(llm.complete, messages(batch), json_output=True): batch
+            for batch in batches
+        }
+        for future in as_completed(futures):
+            yield futures[future], future.result()
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
+def _batches[T](items: Sequence[T], size: int) -> list[list[T]]:
+    return [list(items[start : start + size]) for start in range(0, len(items), size)]
+
+
 def sync_extractions(
     store: GraphStore,
     llm: LLM,
     cache: ExtractionCache,
     batch_size: int = 4,
-    workers: int = 4,
+    workers: int = 8,
     limit: int | None = None,
     on_progress: Callable[[int], None] | None = None,
 ) -> ExtractReport:
@@ -201,36 +232,27 @@ def sync_extractions(
     )
     if limit is not None:
         pending = pending[:limit]
-    batches = [pending[start : start + batch_size] for start in range(0, len(pending), batch_size)]
 
-    def read(batch: list[Node]) -> Completion:
-        texts = [str(node.props.get("text", "")) for node in batch]
-        return llm.complete(extraction_messages(texts), json_output=True)
+    def messages(batch: list[Node]) -> list[ChatMessage]:
+        return extraction_messages([str(node.props.get("text", "")) for node in batch])
 
-    executor = ThreadPoolExecutor(max_workers=max(1, workers))
-    try:
-        futures = {executor.submit(read, batch): batch for batch in batches}
-        for future in as_completed(futures):
-            batch = futures[future]
-            completion = future.result()  # LLMError ends the run
-            report.input_tokens += completion.input_tokens
-            report.output_tokens += completion.output_tokens
-            try:
-                found = parse_extractions(completion.text, len(batch))
-            except ExtractionError:
-                found = [None] * len(batch)
-            fresh = {
-                text_hash(str(node.props.get("text", ""))): extraction
-                for node, extraction in zip(batch, found, strict=True)
-                if extraction is not None
-            }
-            cache.put_many(llm.name, fresh)
-            report.extracted += len(fresh)
-            report.failed += len(batch) - len(fresh)
-            if on_progress is not None:
-                on_progress(len(batch))
-    finally:
-        executor.shutdown(wait=True, cancel_futures=True)
+    for batch, completion in _answers(llm, _batches(pending, batch_size), messages, workers):
+        report.input_tokens += completion.input_tokens
+        report.output_tokens += completion.output_tokens
+        try:
+            found = parse_extractions(completion.text, len(batch))
+        except ExtractionError:
+            found = [None] * len(batch)
+        fresh = {
+            text_hash(str(node.props.get("text", ""))): extraction
+            for node, extraction in zip(batch, found, strict=True)
+            if extraction is not None
+        }
+        cache.put_many(llm.name, fresh)
+        report.extracted += len(fresh)
+        report.failed += len(batch) - len(fresh)
+        if on_progress is not None:
+            on_progress(len(batch))
     return report
 
 
@@ -258,14 +280,25 @@ class _RelationshipDraft:
     count: int = 0
 
 
+def _to_summarise(node: Node) -> EntityToSummarise:
+    return EntityToSummarise(
+        str(node.props.get("name", "")),
+        str(node.props.get("type", "")),
+        tuple(str(description) for description in node.props.get("descriptions", [])),
+    )
+
+
 def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> EntityReport:
     """Rebuild entities and relationships from ``model``'s cached reading of the chunks.
 
     The entity graph is replaced as a whole, so it always matches the chunks that
     exist now: entities found only in text that was since removed disappear. Two
-    mentions are one entity when their names match ignoring case and spacing; its
-    name and type are the ones used most often, and every distinct description is
-    kept for summarising later. Every chunk links to the entities it mentions.
+    mentions are one entity when their names match by ``entity_key``; its name
+    and type are the ones used most often, with invented types mapped onto the
+    suggested ones where they clearly mean the same, and every distinct
+    description is kept. An entity described once uses that description as its
+    summary; one described more often gets its cached summary, or ``None`` until
+    ``sync_summaries`` writes one. Every chunk links to the entities it mentions.
     """
     chunks = sorted(store.find_nodes(Label.CHUNK), key=lambda node: node.id)
     hashes = {node.id: text_hash(str(node.props.get("text", ""))) for node in chunks}
@@ -280,12 +313,14 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
         for entity in extraction.entities:
             draft = entities.setdefault(entity_key(entity.name), _EntityDraft())
             draft.names[entity.name] += 1
-            draft.types[entity.type] += 1
+            draft.types[canonical_type(entity.type)] += 1
             if entity.description:
                 draft.descriptions[entity.description] = None
             draft.chunks.add(chunk.id)
         for relationship in extraction.relationships:
             ends = (entity_key(relationship.source), entity_key(relationship.target))
+            if ends[0] == ends[1]:
+                continue  # two names that now count as one entity
             link = relationships.setdefault(ends, _RelationshipDraft())
             if relationship.description:
                 link.descriptions[relationship.description] = None
@@ -306,6 +341,16 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
         )
         for key, draft in sorted(entities.items())
     ]
+    pending = [_to_summarise(node) for node in nodes if len(node.props["descriptions"]) > 1]
+    summaries = cache.get_summaries(model, [entity.key for entity in pending])
+    for node in nodes:
+        descriptions = node.props["descriptions"]
+        if len(descriptions) == 1:
+            node.props["summary"] = descriptions[0]
+        elif descriptions:
+            node.props["summary"] = summaries.get(_to_summarise(node).key)
+        else:
+            node.props["summary"] = ""
     mentions = [
         Edge(chunk_id, EdgeType.MENTIONS, entity_id(key))
         for key, draft in sorted(entities.items())
@@ -327,3 +372,61 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
         store.upsert_edges(mentions)
         store.upsert_edges(links)
     return EntityReport(len(nodes), len(links), len(mentions))
+
+
+@dataclass(slots=True)
+class SummaryReport:
+    """What a summary run did."""
+
+    summarised: int = 0
+    failed: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+def pending_summaries(store: GraphStore) -> list[Node]:
+    """Entities described more than once that have no summary yet, in id order."""
+    return sorted(
+        (node for node in store.find_nodes(Label.ENTITY) if node.props.get("summary") is None),
+        key=lambda node: node.id,
+    )
+
+
+def sync_summaries(
+    store: GraphStore,
+    llm: LLM,
+    cache: ExtractionCache,
+    batch_size: int = 10,
+    workers: int = 8,
+    on_progress: Callable[[int], None] | None = None,
+) -> SummaryReport:
+    """Ask ``llm`` to merge the descriptions of every entity that has no summary yet.
+
+    Run after ``sync_entities``. Summaries are cached by the entity's name and set
+    of descriptions, so they are written once and survive rebuilding the graph,
+    and an entity gets a new summary only when a new description turns up. An
+    answer that cannot be read is skipped and asked again next run.
+    """
+    pending = pending_summaries(store)
+    report = SummaryReport()
+
+    def messages(batch: list[Node]) -> list[ChatMessage]:
+        return summary_messages([_to_summarise(node) for node in batch])
+
+    for batch, completion in _answers(llm, _batches(pending, batch_size), messages, workers):
+        report.input_tokens += completion.input_tokens
+        report.output_tokens += completion.output_tokens
+        try:
+            found = parse_summaries(completion.text, len(batch))
+        except ExtractionError:
+            found = [None] * len(batch)
+        written = [(node, text) for node, text in zip(batch, found, strict=True) if text]
+        cache.put_summaries(llm.name, {_to_summarise(node).key: text for node, text in written})
+        store.upsert_nodes(
+            Node(node.id, node.label, {**node.props, "summary": text}) for node, text in written
+        )
+        report.summarised += len(written)
+        report.failed += len(batch) - len(written)
+        if on_progress is not None:
+            on_progress(len(batch))
+    return report

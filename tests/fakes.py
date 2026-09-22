@@ -46,7 +46,8 @@ class FakeLLM:
     """Answers extraction requests from the passages it is sent, without a model.
 
     Capitalised words become entities and consecutive entities in a passage are
-    related, so tests can predict the graph from the text. It counts requests,
+    related, so tests can predict the graph from the text. A summary joins an
+    entity's descriptions. It records extraction and summary requests separately,
     and can return an unreadable answer or fail outright on chosen requests.
     """
 
@@ -58,6 +59,7 @@ class FakeLLM:
     ) -> None:
         self.name = name
         self.requests: list[list[str]] = []
+        self.summary_requests: list[list[str]] = []
         self._broken = set(broken_requests)
         self._fail_on = fail_on_request
         self._lock = threading.Lock()
@@ -69,11 +71,13 @@ class FakeLLM:
         json_output: bool = False,
         max_tokens: int | None = None,
     ) -> Completion:
+        if messages[-1].content.startswith("### Entity"):
+            return self._summaries(messages[-1].content)
         passages = re.split(r"^### Passage \d+\n", messages[-1].content, flags=re.MULTILINE)[1:]
         passages = [passage.strip() for passage in passages]
         with self._lock:
             self.requests.append(passages)
-            number = len(self.requests)
+            number = len(self.requests) + len(self.summary_requests)
         if number == self._fail_on:
             raise LLMError("fake model is unreachable")
         if number in self._broken:
@@ -84,6 +88,27 @@ class FakeLLM:
             ]
         }
         return Completion(json.dumps(answer), self.name, 10 * len(passages), 20 * len(passages))
+
+    def _summaries(self, content: str) -> Completion:
+        blocks = re.split(r"^### Entity \d+: ", content, flags=re.MULTILINE)[1:]
+        names = [block.split(" (", 1)[0] for block in blocks]
+        with self._lock:
+            self.summary_requests.append(names)
+            number = len(self.requests) + len(self.summary_requests)
+        if number == self._fail_on:
+            raise LLMError("fake model is unreachable")
+        if number in self._broken:
+            return Completion("this is not JSON", self.name, 10, 5)
+        summaries = [
+            {
+                "entity": index,
+                "summary": " / ".join(
+                    line[2:] for line in block.splitlines() if line.startswith("- ")
+                ),
+            }
+            for index, block in enumerate(blocks, start=1)
+        ]
+        return Completion(json.dumps({"summaries": summaries}), self.name, 5, 5)
 
     @staticmethod
     def _passage(index: int, text: str) -> dict[str, object]:

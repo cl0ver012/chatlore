@@ -7,19 +7,32 @@ from collections.abc import Iterator
 
 import pytest
 
+from chatlore.embeddings import text_hash
 from chatlore.extraction import (
     SUGGESTED_TYPES,
+    EntityToSummarise,
     ExtractedEntity,
     ExtractedRelationship,
     Extraction,
     ExtractionCache,
     ExtractionError,
+    canonical_type,
+    entity_key,
     extraction_messages,
     parse_extractions,
+    parse_summaries,
+    summary_messages,
 )
 from chatlore.llm import LLMError
 from chatlore.models import ContentPart, Conversation, Message, Role, SourceKind
-from chatlore.pipeline import pending_extractions, sync_chunks, sync_entities, sync_extractions
+from chatlore.pipeline import (
+    pending_extractions,
+    pending_summaries,
+    sync_chunks,
+    sync_entities,
+    sync_extractions,
+    sync_summaries,
+)
 from chatlore.store import EdgeType, GraphStore, Label, SQLiteStore
 from tests.fakes import FakeLLM
 
@@ -315,3 +328,178 @@ def test_only_the_named_model_builds_the_graph(store: GraphStore, cache: Extract
     report = sync_entities(store, cache, "model-b")
 
     assert report.entities == 0
+
+
+# -- cleaning up and summarising -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Drive D:", "drive d"),
+        ("Challenge fees", "Challenge fee"),
+        ("Stocks", "stock"),
+        ("claude-code", "Claude  Code"),
+        ("snake_case", "Snake Case"),
+        (" PostgreSQL.", "postgresql"),
+    ],
+)
+def test_names_that_differ_only_in_form_are_one_entity(first: str, second: str) -> None:
+    assert entity_key(first) == entity_key(second)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("C++", "C"), ("C#", "C"), ("Llama", "Ollama"), ("Bus", "Bu"), ("Class", "Clas")],
+)
+def test_names_that_mean_different_things_stay_apart(first: str, second: str) -> None:
+    assert entity_key(first) != entity_key(second)
+
+
+def test_invented_types_that_mean_a_suggested_one_are_mapped() -> None:
+    assert canonical_type("company") == "organization"
+    assert canonical_type("city") == "place"
+    assert canonical_type("tool") == "tool"
+    assert canonical_type("law") == "law"
+
+
+def test_a_name_of_only_punctuation_is_not_an_entity() -> None:
+    [extraction] = parse_extractions(_answer({"passage": 1, "entities": [{"name": ":"}]}), 1)
+
+    assert extraction == Extraction()
+
+
+def _remember(store: GraphStore, cache: ExtractionCache, found: dict[str, Extraction]) -> None:
+    """Load one conversation with a message per text and cache what the model 'found'."""
+    _load(store, _conversation("one", *found))
+    cache.put_many("model", {text_hash(text): extraction for text, extraction in found.items()})
+
+
+def test_merged_names_share_one_entity_and_drop_links_to_themselves(
+    store: GraphStore, cache: ExtractionCache
+) -> None:
+    _remember(
+        store,
+        cache,
+        {
+            "First.": Extraction(
+                (
+                    ExtractedEntity("Challenge fees", "company", "Fees for a challenge."),
+                    ExtractedEntity("Challenge fee", "concept", "A single fee."),
+                ),
+                (ExtractedRelationship("Challenge fees", "Challenge fee", "Same thing.", 5),),
+            ),
+            "Second.": Extraction((ExtractedEntity("Challenge fee", "company", "Paid once."),)),
+        },
+    )
+
+    report = sync_entities(store, cache, "model")
+
+    [entity] = store.find_nodes(Label.ENTITY)
+    assert entity.props["name"] == "Challenge fee"
+    assert entity.props["type"] == "organization"
+    assert entity.props["mentions"] == 2
+    assert (report.entities, report.relationships) == (1, 0)
+
+
+def test_the_request_lists_each_entity_with_its_descriptions() -> None:
+    system, user = summary_messages(
+        [
+            EntityToSummarise("Rust", "tool", ("A language.", "Used for the CLI.")),
+            EntityToSummarise("Lisbon", "place", ("A city.",)),
+        ]
+    )
+
+    assert "summaries" in system.content
+    assert user.content == (
+        "### Entity 1: Rust (tool)\n- A language.\n- Used for the CLI.\n\n"
+        "### Entity 2: Lisbon (place)\n- A city."
+    )
+
+
+def test_summaries_are_read_per_entity() -> None:
+    answer = json.dumps(
+        {
+            "summaries": [
+                {"entity": 2, "summary": "  A   city. "},
+                {"entity": 1, "summary": ""},
+                {"entity": 9, "summary": "Out of range."},
+            ]
+        }
+    )
+
+    assert parse_summaries(answer, 2) == [None, "A city."]
+    with pytest.raises(ExtractionError):
+        parse_summaries('{"passages": []}', 1)
+
+
+def test_the_summary_key_ignores_the_order_descriptions_were_found_in() -> None:
+    first = EntityToSummarise("Rust", "tool", ("A language.", "Fast."))
+
+    assert first.key == EntityToSummarise("Rust", "concept", ("Fast.", "A language.")).key
+    assert first.key != EntityToSummarise("Rust", "tool", ("A language.",)).key
+
+
+def _summaries(store: GraphStore) -> dict[str, object]:
+    return {
+        str(node.props["name"]): node.props["summary"] for node in store.find_nodes(Label.ENTITY)
+    }
+
+
+def test_only_entities_described_more_than_once_are_summarised(
+    store: GraphStore, cache: ExtractionCache
+) -> None:
+    _load(store, _conversation("one", "Alice moved Postgres.", "Postgres is fast."))
+    llm = FakeLLM()
+    sync_extractions(store, llm, cache)
+    sync_entities(store, cache, llm.name)
+
+    report = sync_summaries(store, llm, cache)
+
+    summaries = _summaries(store)
+    assert llm.summary_requests == [["Postgres"]]
+    assert report.summarised == 1
+    assert summaries["Alice"] == "Alice appears in: Alice moved Postgres."
+    assert set(str(summaries["Postgres"]).split(" / ")) == {
+        "Postgres appears in: Alice moved Postgres.",
+        "Postgres appears in: Postgres is fast.",
+    }
+    assert pending_summaries(store) == []
+
+
+def test_summaries_survive_a_rebuild_and_follow_new_descriptions(
+    store: GraphStore, cache: ExtractionCache
+) -> None:
+    _load(store, _conversation("one", "Alice moved Postgres.", "Postgres is fast."))
+    llm = FakeLLM()
+    sync_extractions(store, llm, cache)
+    sync_entities(store, cache, llm.name)
+    sync_summaries(store, llm, cache)
+
+    sync_entities(store, cache, llm.name)
+    assert pending_summaries(store) == []
+
+    _load(
+        store, _conversation("one", "Alice moved Postgres.", "Postgres is fast.", "Postgres won.")
+    )
+    sync_extractions(store, llm, cache)
+    sync_entities(store, cache, llm.name)
+    sync_summaries(store, llm, cache)
+
+    assert llm.summary_requests == [["Postgres"], ["Postgres"]]
+    assert "Postgres won." in str(_summaries(store)["Postgres"])
+
+
+def test_an_unreadable_summary_is_asked_again_next_run(
+    store: GraphStore, cache: ExtractionCache
+) -> None:
+    _load(store, _conversation("one", "Alice moved Postgres.", "Postgres is fast."))
+    sync_extractions(store, FakeLLM(), cache, batch_size=2)
+    sync_entities(store, cache, "fake-llm")
+
+    first = sync_summaries(store, FakeLLM(broken_requests=[1]), cache)
+    second = sync_summaries(store, FakeLLM(), cache)
+
+    assert (first.summarised, first.failed) == (0, 1)
+    assert second.summarised == 1
+    assert pending_summaries(store) == []
