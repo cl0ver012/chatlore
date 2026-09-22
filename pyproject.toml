@@ -33,6 +33,7 @@ dependencies = [
   "fastembed>=0.4",
   "openai>=3.17",
   "pydantic>=2.9",
+  "python-dotenv>=1.2",
   "pyyaml>=6.0",
   "rich>=13.7",
   "sqlite-vec>=0.1.6",
@@ -46,7 +47,7 @@ Issues = "https://github.com/cl0ver012/chatlore/issues"
 Changelog = "https://github.com/cl0ver012/chatlore/blob/main/CHANGELOG.md"
 
 [project.scripts]
-chatlore = "chatlore.cli:app"
+chatlore = "chatlore.cli:run"
 
 [build-system]
 requires = ["hatchling>=1.25"]
