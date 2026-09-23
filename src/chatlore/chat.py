@@ -26,6 +26,8 @@ MAX_SOURCES = 8
 MAX_ENTITIES = 6
 MAX_TOPICS = 2
 CHUNKS_PER_ENTITY = 3
+NEAR_CANDIDATES = 25
+"""Chunks ranked by meaning, per source asked for, that named entities choose from."""
 MAX_ANSWER_TOKENS = 1500
 MAX_NAME_WORDS = 4
 
@@ -158,24 +160,38 @@ def mentioned_entities(store: GraphStore, question: str) -> list[Node]:
     return list(found.values())
 
 
-def _chunks_of(store: GraphStore, entities: Sequence[Node]) -> list[str]:
-    """Chunks mentioning the entities, taking turns so each entity is represented."""
-    lists = [
-        [
-            chunk.id
-            for _, chunk in sorted(
-                store.neighbors(entity.id, [EdgeType.MENTIONS], "in", limit=1_000_000),
-                key=lambda pair: str(pair[1].props.get("created_at") or ""),
-                reverse=True,
+def _chunks_of(
+    store: GraphStore, entities: Sequence[Node], nearness: dict[str, int] | None
+) -> list[str]:
+    """Chunks mentioning the entities, taking turns so each entity is represented.
+
+    With ``nearness``, the rank of chunks by meaning, an entity offers its chunks
+    closest to the question: "Mac" is mentioned in dozens of places, and only
+    the ones about the question help. Without it, its most recent chunks.
+    """
+    lists: list[list[str]] = []
+    for entity in entities:
+        chunks = [
+            chunk
+            for _, chunk in store.neighbors(entity.id, [EdgeType.MENTIONS], "in", limit=1_000_000)
+        ]
+        if nearness is not None:
+            ordered_chunks = sorted(
+                (chunk.id for chunk in chunks if chunk.id in nearness), key=nearness.__getitem__
             )
-        ][:CHUNKS_PER_ENTITY]
-        for entity in entities
-    ]
+        else:
+            ordered_chunks = [
+                chunk.id
+                for chunk in sorted(
+                    chunks, key=lambda chunk: str(chunk.props.get("created_at") or ""), reverse=True
+                )
+            ]
+        lists.append(ordered_chunks[:CHUNKS_PER_ENTITY])
     ordered: list[str] = []
     for turn in range(CHUNKS_PER_ENTITY):
-        for chunks in lists:
-            if turn < len(chunks) and chunks[turn] not in ordered:
-                ordered.append(chunks[turn])
+        for offered in lists:
+            if turn < len(offered) and offered[turn] not in ordered:
+                ordered.append(offered[turn])
     return ordered
 
 
@@ -205,10 +221,13 @@ def retrieve(
 ) -> Context:
     """Gather the passages and notes the model needs to answer ``question``."""
     entities = mentioned_entities(store, question)
-    ranked: list[list[str]] = [_chunks_of(store, entities)]
+    nearness: dict[str, int] | None = None
+    ranked: list[list[str]] = []
     if embedding is not None:
-        hits = store.search_vector(embedding, limit=limit * 3, labels=[Label.CHUNK])
-        ranked.append([hit.node_id for hit in hits])
+        hits = store.search_vector(embedding, limit=limit * NEAR_CANDIDATES, labels=[Label.CHUNK])
+        nearness = {hit.node_id: rank for rank, hit in enumerate(hits)}
+        ranked.append([hit.node_id for hit in hits[: limit * 3]])
+    ranked.append(_chunks_of(store, entities, nearness))
 
     scores: dict[str, float] = {}
     for chunk_ids in ranked:

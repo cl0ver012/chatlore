@@ -269,3 +269,18 @@ def test_ask_reports_a_failing_model(home: Path, monkeypatch: pytest.MonkeyPatch
 
     assert result.exit_code == 1
     assert "fake model is unreachable" in result.output
+
+
+def test_with_embeddings_a_named_entity_offers_its_passages_nearest_the_question() -> None:
+    backend = SQLiteStore(":memory:")
+    try:
+        _build(backend, embed=True)
+        question = "which train goes from Rossio to Sintra"
+        with_meaning = retrieve(
+            backend, question, normalise(FakeEmbedder().embed_query(question)), limit=1
+        )
+    finally:
+        backend.close()
+
+    [source] = with_meaning.sources
+    assert "train" in source.text
