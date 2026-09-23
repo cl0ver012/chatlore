@@ -1,9 +1,10 @@
 """REST API over the library, with streaming chat.
 
 `chatlore serve` runs it. Everything the command line shows is here too:
-search, conversations, entities, topics, and chat. Chat streams server-sent
-events: the sources first, then the answer as it is written, then which sources
-it cited. The web interface and the MCP server are built on these endpoints.
+search, conversations, entities, topics, a drawable part of the graph, and
+chat. Chat streams server-sent events: the sources first, then the answer as it
+is written, then which sources it cited. The web interface at / is built on
+these endpoints, as the MCP server will be.
 
 Each request opens the store and closes it again, so requests never share a
 database connection across threads. The server listens on 127.0.0.1 unless told
@@ -18,6 +19,7 @@ from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from chatlore import __version__
@@ -27,6 +29,9 @@ from chatlore.llm import LLMError, make_llm
 from chatlore.paths import default_home
 from chatlore.search import hybrid_search
 from chatlore.store import EdgeType, GraphStore, Label, Node, open_store
+
+WEB = Path(__file__).parent / "web"
+"""The web interface's files, served at /."""
 
 
 class ChatRequest(BaseModel):
@@ -281,6 +286,74 @@ def create_app(home: Path | None = None) -> FastAPI:
                 ],
             }
 
+    @app.get("/graph")
+    def graph(
+        entity: str | None = None,
+        topic: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 150,
+    ) -> dict[str, Any]:
+        """A part of the knowledge graph to draw: entities, their links, and their topics.
+
+        With ``entity``, that entity and its most strongly related neighbours; with
+        ``topic``, the topic's entities; otherwise the most mentioned entities that
+        have relationships. Edges are the relationships among the chosen entities.
+        """
+        with store() as graph:
+            if entity:
+                center = graph.get_node(entity)
+                if center is None or center.label != Label.ENTITY:
+                    raise HTTPException(404, "no such entity")
+                around = sorted(
+                    graph.neighbors(entity, [EdgeType.RELATED_TO], "both", limit=1_000_000),
+                    key=lambda pair: -int(pair[0].props.get("weight", 0)),
+                )
+                chosen = {center.id: center} | {
+                    other.id: other for _, other in around[: max(0, limit - 1)]
+                }
+            elif topic:
+                found = graph.get_node(topic)
+                if found is None or found.label != Label.TOPIC:
+                    raise HTTPException(404, "no such topic")
+                members = graph.neighbors(topic, [EdgeType.IN_TOPIC], "in", limit=1_000_000)
+                chosen = {
+                    node.id: node
+                    for _, node in sorted(members, key=lambda pair: -int(pair[1].props["mentions"]))
+                }
+                chosen = dict(list(chosen.items())[:limit])
+            else:
+                linked = [
+                    node
+                    for node in graph.find_nodes(Label.ENTITY)
+                    if graph.neighbors(node.id, [EdgeType.RELATED_TO], "both", limit=1)
+                ]
+                linked.sort(key=lambda node: -int(node.props["mentions"]))
+                chosen = {node.id: node for node in linked[:limit]}
+
+            nodes, edges, topics = [], [], {}
+            for node in chosen.values():
+                in_topic = graph.neighbors(node.id, [EdgeType.IN_TOPIC])
+                topic_node = in_topic[0][1] if in_topic else None
+                if topic_node is not None:
+                    topics[topic_node.id] = topic_node.props.get("title")
+                nodes.append({**_entity(node), "topic": topic_node.id if topic_node else None})
+                for edge, other in graph.neighbors(
+                    node.id, [EdgeType.RELATED_TO], "out", limit=1_000_000
+                ):
+                    if other.id in chosen:
+                        edges.append(
+                            {
+                                "source": node.id,
+                                "target": other.id,
+                                "weight": edge.props.get("weight", 1),
+                                "description": (edge.props.get("descriptions") or [None])[0],
+                            }
+                        )
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "topics": [{"id": key, "title": title} for key, title in topics.items()],
+            }
+
     @app.post("/chat", response_class=EventSourceResponse)
     def chat(request: ChatRequest) -> Iterator[ServerSentEvent]:
         """Answer a question, streaming `sources`, then `token`s, then `done` or `error`.
@@ -320,4 +393,7 @@ def create_app(home: Path | None = None) -> FastAPI:
         numbers = [source.number for source in cited("".join(written), context)]
         yield ServerSentEvent(event="done", data={"cited": numbers, "found": True})
 
+    # The web interface: plain files, no build step. Mounted last, so every API
+    # route above takes precedence over a file of the same name.
+    app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
     return app

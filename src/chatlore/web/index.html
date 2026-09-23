@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatLore</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">ChatLore</span>
+      <span class="tagline">All your AI conversations, one graph, one chat.</span>
+    </div>
+    <nav>
+      <button data-view="ask" class="active">Ask</button>
+      <button data-view="search">Search</button>
+      <button data-view="conversations">Conversations</button>
+      <button data-view="topics">Topics</button>
+      <button data-view="graph">Graph</button>
+    </nav>
+    <div id="stats" class="stats"></div>
+  </header>
+
+  <main>
+    <section id="view-ask" class="view active">
+      <form id="ask-form" class="bar">
+        <input id="ask-input" placeholder="Ask your conversations anything…" autocomplete="off">
+        <button type="submit">Ask</button>
+      </form>
+      <div id="ask-answer" class="answer"></div>
+      <div id="ask-sources" class="sources"></div>
+    </section>
+
+    <section id="view-search" class="view">
+      <form id="search-form" class="bar">
+        <input id="search-input" placeholder="Search by words or meaning…" autocomplete="off">
+        <button type="submit">Search</button>
+      </form>
+      <div id="search-results" class="list"></div>
+    </section>
+
+    <section id="view-conversations" class="view">
+      <div id="conversations-list" class="list"></div>
+      <div class="actions"><button id="conversations-more" type="button" hidden>Show more</button></div>
+    </section>
+
+    <section id="view-topics" class="view">
+      <form id="topics-form" class="bar">
+        <input id="topics-input" placeholder="Filter topics by words…" autocomplete="off">
+        <button type="submit">Filter</button>
+      </form>
+      <div class="split">
+        <div id="topics-list" class="list"></div>
+        <div id="topic-detail" class="detail"><p class="muted">Pick a topic to read its report.</p></div>
+      </div>
+    </section>
+
+    <section id="view-graph" class="view">
+      <div class="graph-controls">
+        <form id="graph-form">
+          <input id="graph-input" placeholder="Find an entity…" autocomplete="off">
+          <button type="submit">Show</button>
+        </form>
+        <select id="graph-topic"><option value="">Most connected entities</option></select>
+        <span id="graph-info" class="muted"></span>
+      </div>
+      <div class="graph-area">
+        <canvas id="graph-canvas"></canvas>
+        <aside id="graph-panel" class="detail">
+          <p class="muted">Drag to move, scroll to zoom, double-click to fit. Click an entity to see what the graph
+            knows about it.</p>
+          <div id="graph-legend"></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="conversation">
+    <div class="dialog-head">
+      <h2 id="conversation-title"></h2>
+      <button id="conversation-close" type="button">Close</button>
+    </div>
+    <div id="conversation-body"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
