@@ -602,6 +602,32 @@ def ask(
         )
 
 
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+@app.command()
+def serve(
+    host: Annotated[
+        str, typer.Option("--host", help="Address to listen on; this machine only by default.")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int, typer.Option("--port", min=1, max=65535, help="Port to listen on.")
+    ] = 8000,
+) -> None:
+    """Serve the REST API with streaming chat. Interactive docs are at /docs."""
+    import uvicorn  # loaded here so other commands start without the web stack
+
+    from chatlore.api import create_app
+
+    if host not in _LOCAL_HOSTS:
+        console.print(
+            "[yellow]Listening beyond this machine: anyone who can reach this address "
+            "can read your library.[/yellow]"
+        )
+    console.print(f"ChatLore API on http://{host}:{port}  (docs: http://{host}:{port}/docs)")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+
+
 def _progress() -> Progress:
     return Progress(
         TextColumn("{task.description}"),
