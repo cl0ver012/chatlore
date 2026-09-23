@@ -11,7 +11,7 @@ Importing and searching never need a model. Only extraction and chat do.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlparse
@@ -90,6 +90,28 @@ class LLM(Protocol):
         ...
 
 
+class StreamingLLM(LLM, Protocol):
+    """A model that can also hand over its answer piece by piece, as chat needs."""
+
+    def stream(
+        self, messages: Sequence[ChatMessage], *, max_tokens: int | None = None
+    ) -> Iterator[str]:
+        """Answer ``messages``, yielding text as it is written."""
+        ...
+
+
+def _params(messages: Sequence[ChatMessage]) -> list[ChatCompletionMessageParam]:
+    params: list[ChatCompletionMessageParam] = []
+    for message in messages:
+        if message.role == "system":
+            params.append({"role": "system", "content": message.content})
+        elif message.role == "user":
+            params.append({"role": "user", "content": message.content})
+        else:
+            params.append({"role": "assistant", "content": message.content})
+    return params
+
+
 @dataclass(frozen=True, slots=True)
 class LLMSettings:
     """Which model to use and where, read from the environment."""
@@ -161,18 +183,10 @@ class OpenAICompatibleLLM:
         json_output: bool = False,
         max_tokens: int | None = None,
     ) -> Completion:
-        params: list[ChatCompletionMessageParam] = []
-        for message in messages:
-            if message.role == "system":
-                params.append({"role": "system", "content": message.content})
-            elif message.role == "user":
-                params.append({"role": "user", "content": message.content})
-            else:
-                params.append({"role": "assistant", "content": message.content})
         try:
             response = self._client.chat.completions.create(
                 model=self.name,
-                messages=params,
+                messages=_params(messages),
                 response_format={"type": "json_object"} if json_output else openai.omit,
                 max_tokens=max_tokens if max_tokens is not None else openai.omit,
                 extra_body=self._extra_body or None,
@@ -200,6 +214,47 @@ class OpenAICompatibleLLM:
             input_tokens=usage.prompt_tokens if usage is not None else 0,
             output_tokens=usage.completion_tokens if usage is not None else 0,
         )
+
+    def stream(
+        self, messages: Sequence[ChatMessage], *, max_tokens: int | None = None
+    ) -> Iterator[str]:
+        """Yield the answer as it is written.
+
+        Errors are the same as for ``complete``. An answer cut off at the token
+        limit raises ``LLMAnswerError`` after the text written so far.
+        """
+        written = False
+        try:
+            response = self._client.chat.completions.create(
+                model=self.name,
+                messages=_params(messages),
+                max_tokens=max_tokens if max_tokens is not None else openai.omit,
+                extra_body=self._extra_body or None,
+                stream=True,
+            )
+            try:
+                for chunk in response:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    if choice.delta.content:
+                        written = True
+                        yield choice.delta.content
+                    if choice.finish_reason == "length":
+                        raise LLMAnswerError(
+                            f"{self.name} stopped at the token limit before finishing"
+                        )
+            finally:
+                response.close()
+        except openai.APIStatusError as error:
+            raise LLMError(
+                f"{self.name} at {self.base_url} failed with HTTP {error.status_code}: "
+                f"{error.message}"
+            ) from error
+        except openai.APIConnectionError as error:
+            raise LLMError(f"could not reach {self.base_url}: {error}") from error
+        if not written:
+            raise LLMAnswerError(f"{self.name} returned an empty answer")
 
 
 def llm_settings() -> LLMSettings:
