@@ -11,7 +11,8 @@ and Markdown exports land in a local library and a SQLite graph store you can
 search from the terminal by words, by meaning, or both. A language model turns
 them into a knowledge graph of entities, relationships, and topics that you can
 browse and search, and you can ask questions and get answers with sources, in
-the terminal or over a REST API. The roadmap below shows what comes next.
+the terminal, over a REST API, or in a web interface with a graph explorer.
+The roadmap below shows what comes next.
 
 ## Try it
 
@@ -28,7 +29,7 @@ uv run chatlore extract --limit 50                        # entities, needs a mo
 uv run chatlore topics                                    # what the conversations are about
 uv run chatlore entity "postgres"                         # one entity and where it came up
 uv run chatlore ask "why was my query slow?"               # an answer with sources
-uv run chatlore serve                                     # REST API and streaming chat
+uv run chatlore serve                                     # web UI and API on http://127.0.0.1:8000
 uv run chatlore stats
 ```
 
@@ -37,8 +38,8 @@ after a fresh export only adds what changed. How to get each export, what is
 kept, and the known limits are in [docs/importers.md](docs/importers.md).
 Extraction and chat use any OpenAI-compatible model, OpenRouter by default;
 see [docs/models.md](docs/models.md). The knowledge graph is described in
-[docs/extraction.md](docs/extraction.md), and chat and the API in
-[docs/chat.md](docs/chat.md).
+[docs/extraction.md](docs/extraction.md), chat and the API in
+[docs/chat.md](docs/chat.md), and the web interface in [docs/web.md](docs/web.md).
 
 ## What ChatLore will do
 
@@ -70,7 +71,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M3 | Chunking, embeddings, hybrid search | done |
 | M4 | Entity, topic, and fact extraction with provenance | entities and topics done; facts later |
 | M5 | REST API with streaming chat | done |
-| M6 | Web UI: conversations, graph explorer, chat | planned |
+| M6 | Web UI: conversations, graph explorer, chat | basic version done |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | planned |
 | M8 | FalkorDB backend | planned |
 | M9 | Hosted demo | planned |
