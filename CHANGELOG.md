@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `chatlore topics` lists topics or finds them by words, and `chatlore entity` shows an entity's
   summary, other names, topic, relationships, and the conversations that mention it.
 - `chatlore search --hybrid` also finds messages through the entities they mention.
+- `chatlore ask` answers a question from the library, citing the passages it used. Passages come
+  from meaning and from the entities the question names, merged with rank fusion; the model also
+  gets the entities' summaries and their topics' reports. Guide in `docs/chat.md`.
+- `chatlore serve` runs a REST API on 127.0.0.1: health, stats, search, conversations, entities,
+  and topics, and `POST /chat`, which streams sources, answer tokens, and citations as
+  server-sent events.
+- The language model client can stream answers.
 - CLI output shows paths relative to the home directory.
 
 ### Changed
