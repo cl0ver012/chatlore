@@ -19,6 +19,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 from rich.table import Table
 
 from chatlore import __version__
+from chatlore.chat import MAX_SOURCES, answer, cited, retrieve
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
 from chatlore.extraction import ExtractionCache, entity_key
 from chatlore.importers import (
@@ -538,6 +539,67 @@ def _find_entity(store: GraphStore, name: str) -> Node | None:
         if entity_key(str(node.props["name"])) == exact:
             return node
     return nodes[0] if nodes else None
+
+
+@app.command()
+def ask(
+    question: Annotated[str, typer.Argument(help="What you want to know.")],
+    sources: Annotated[
+        int, typer.Option("--sources", "-n", min=1, max=20, help="Passages to answer from.")
+    ] = MAX_SOURCES,
+) -> None:
+    """Answer a question from your conversations, citing the passages used."""
+    home = default_home()
+    with open_store(home) as store:
+        if store.count_nodes(Label.CHUNK) == 0:
+            console.print(
+                "Nothing to answer from yet. Run `chatlore import` and `chatlore process`."
+            )
+            return
+        embedding = None
+        if store.count_embeddings() > 0:
+            try:
+                embedding = normalise(make_embedder(home).embed_query(question))
+            except EmbeddingError as error:
+                console.print(f"[red]{error}[/red]")
+                raise typer.Exit(code=1) from error
+        else:
+            console.print(
+                "[dim]No embeddings yet, so only names in the question are matched. "
+                "Run `chatlore process` for better answers.[/dim]"
+            )
+        context = retrieve(store, question, embedding, limit=sources)
+    if context.empty:
+        console.print("Nothing in your conversations matches that question.")
+        return
+
+    try:
+        llm = make_llm()
+    except LLMError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    written: list[str] = []
+    try:
+        for piece in answer(llm, context):
+            written.append(piece)
+            console.print(piece, end="", markup=False, highlight=False, soft_wrap=True)
+    except LLMError as error:
+        console.print()
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    finally:
+        llm.close()
+    console.print()
+
+    used = cited("".join(written), context) or list(context.sources)
+    console.print()
+    console.print("[bold]Sources[/bold]")
+    for source in used:
+        details = " | ".join(part for part in (source.source, source.date) if part)
+        console.print(
+            f"  {escape(f'[{source.number}]')} {escape(source.title or '(untitled)')}"
+            f"  [dim]{details}[/dim]"
+        )
 
 
 def _progress() -> Progress:
