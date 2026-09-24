@@ -13,27 +13,51 @@ them into a knowledge graph of entities, relationships, and topics that you can
 browse and search, and you can ask questions and get answers with sources, in
 the terminal, over a REST API, or in a web interface with a graph explorer. AI
 assistants such as Claude and Cursor can search it too, through an MCP server.
-The roadmap below shows what comes next.
+A library moves between machines as one archive file. The roadmap below shows
+what comes next.
 
 ## Try it
 
+With [uv](https://docs.astral.sh/uv/) installed, one command downloads ChatLore
+and opens it on a made-up library:
+
 ```bash
-git clone https://github.com/cl0ver012/chatlore.git
-cd chatlore
-uv sync
-uv run chatlore import path/to/chatgpt-export.zip
-uv run chatlore search "postgres index"
-uv run chatlore process                                  # chunk and embed, local model
-uv run chatlore search "why was my query slow" --semantic
-uv run chatlore search "slow postgres query" --hybrid     # words and meaning together
-uv run chatlore extract --limit 50                        # entities, needs a model key
-uv run chatlore topics                                    # what the conversations are about
-uv run chatlore entity "postgres"                         # one entity and where it came up
-uv run chatlore ask "why was my query slow?"               # an answer with sources
-uv run chatlore serve                                     # web UI and API on http://127.0.0.1:8000
-uv run chatlore mcp                                       # tools for Claude, Cursor, and other MCP clients
-uv run chatlore stats
+uvx chatlore demo
 ```
+
+The demo holds 32 invented conversations with their knowledge graph already
+built, so search, topics, and the graph explorer work at once, with no export
+and no API key. It lives in `~/.chatlore-demo`, apart from your own library.
+Asking questions also needs a model key; see [docs/models.md](docs/models.md).
+
+Until the first release is on PyPI, run it from GitHub instead:
+
+```bash
+uvx --from git+https://github.com/cl0ver012/chatlore chatlore demo
+```
+
+## Use it on your own conversations
+
+```bash
+uv tool install chatlore                             # or: pipx install chatlore
+chatlore import path/to/chatgpt-export.zip
+chatlore search "postgres index"
+chatlore process                                     # chunk and embed, local model
+chatlore search "why was my query slow" --semantic
+chatlore search "slow postgres query" --hybrid       # words and meaning together
+chatlore extract --limit 50                          # entities, needs a model key
+chatlore topics                                      # what the conversations are about
+chatlore entity "postgres"                           # one entity and where it came up
+chatlore ask "why was my query slow?"                # an answer with sources
+chatlore serve                                       # web UI and API on http://127.0.0.1:8000
+chatlore mcp                                         # tools for Claude, Cursor, and other MCP clients
+chatlore export chatlore.zip                         # the whole library in one file
+chatlore stats
+```
+
+Before the first PyPI release, install from GitHub with
+`uv tool install git+https://github.com/cl0ver012/chatlore`. The library is
+kept in `~/.chatlore`; `--home <folder>` or `CHATLORE_HOME` picks another.
 
 The source is detected from the file. Importing is idempotent, so re-running it
 after a fresh export only adds what changed. How to get each export, what is
@@ -42,7 +66,8 @@ Extraction and chat use any OpenAI-compatible model, OpenRouter by default;
 see [docs/models.md](docs/models.md). The knowledge graph is described in
 [docs/extraction.md](docs/extraction.md), chat and the API in
 [docs/chat.md](docs/chat.md), the web interface in [docs/web.md](docs/web.md),
-and setting up assistants over MCP in [docs/mcp.md](docs/mcp.md).
+setting up assistants over MCP in [docs/mcp.md](docs/mcp.md), and archives and
+Markdown export in [docs/export.md](docs/export.md).
 
 ## What ChatLore will do
 
@@ -76,9 +101,9 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M5 | REST API with streaming chat | done |
 | M6 | Web UI: conversations, graph explorer, chat | basic version done |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done for local assistants; ChatGPT with the hosted demo |
-| M8 | FalkorDB backend | planned |
+| M8 | Easy to try: PyPI package, demo library, export and import | done; v0.1.0 on PyPI next |
 | M9 | Hosted demo | planned |
-| M10 | v0.1.0 release | planned |
+| M10 | FalkorDB backend | planned |
 
 ## Development setup
 
