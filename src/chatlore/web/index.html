@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatLore</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b5bd6'/%3E%3Ccircle cx='11' cy='12' r='3.2' fill='white'/%3E%3Ccircle cx='21.5' cy='10' r='2.4' fill='white'/%3E%3Ccircle cx='19' cy='21.5' r='3.6' fill='white'/%3E%3Cpath d='M11 12L21.5 10M11 12L19 21.5M21.5 10L19 21.5' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="8" />
+          <path d="M11 12L21.5 10M11 12L19 21.5M21.5 10L19 21.5" />
+          <circle cx="11" cy="12" r="3.2" /><circle cx="21.5" cy="10" r="2.4" /><circle cx="19" cy="21.5" r="3.6" />
+        </svg>
+        <div>
+          <div class="brand-name">ChatLore</div>
+          <div class="brand-tag">Your AI conversations</div>
+        </div>
+      </div>
+
+      <nav>
+        <button data-view="ask" class="active">
+          <svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>
+          Ask
+        </button>
+        <button data-view="search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          Search
+        </button>
+        <button data-view="conversations">
+          <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+          Conversations
+        </button>
+        <button data-view="topics">
+          <svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+          Topics
+        </button>
+        <button data-view="graph">
+          <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="15" cy="18" r="2.5"/><path d="M8.3 7.9l4.9 8.4M8.5 6.8l7-.6M17.4 8.4l-1.6 7.2"/></svg>
+          Graph
+        </button>
+      </nav>
+
+      <div class="library">
+        <div class="library-title">Library</div>
+        <dl id="stats">
+          <div><dt>Conversations</dt><dd>–</dd></div>
+          <div><dt>Entities</dt><dd>–</dd></div>
+          <div><dt>Topics</dt><dd>–</dd></div>
+        </dl>
+      </div>
+    </aside>
+
+    <main>
+      <!-- Ask -->
+      <section id="view-ask" class="view view-ask active">
+        <div id="ask-thread" class="thread">
+          <div id="ask-hero" class="hero">
+            <div class="hero-icon">
+              <svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/></svg>
+            </div>
+            <h1>Ask your conversations</h1>
+            <p>Answers come from your own chats, with a source for every claim.</p>
+            <div id="ask-suggestions" class="suggestions"></div>
+          </div>
+        </div>
+        <form id="ask-form" class="composer">
+          <textarea id="ask-input" rows="1" placeholder="Ask anything about your past conversations…"></textarea>
+          <button type="submit" class="send" aria-label="Ask">
+            <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </form>
+        <p class="composer-hint">Enter to ask · Shift+Enter for a new line</p>
+      </section>
+
+      <!-- Search -->
+      <section id="view-search" class="view">
+        <header class="page-head">
+          <h1>Search</h1>
+          <p>Find messages by their words, their meaning, and the things they mention.</p>
+        </header>
+        <form id="search-form" class="searchbar">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="search-input" placeholder="What are you looking for?" autocomplete="off">
+          <div class="segmented" role="group" aria-label="Search mode">
+            <button type="button" data-mode="hybrid" class="on">Smart</button>
+            <button type="button" data-mode="words">Exact words</button>
+          </div>
+        </form>
+        <div id="search-results" class="results"></div>
+      </section>
+
+      <!-- Conversations -->
+      <section id="view-conversations" class="view">
+        <header class="page-head">
+          <h1>Conversations</h1>
+          <p id="conversations-count">Everything you imported, newest first.</p>
+        </header>
+        <div class="searchbar compact">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="conversations-filter" placeholder="Filter by title…" autocomplete="off">
+        </div>
+        <div id="conversations-list" class="rows"></div>
+      </section>
+
+      <!-- Topics -->
+      <section id="view-topics" class="view">
+        <header class="page-head">
+          <h1>Topics</h1>
+          <p>Groups of closely related things you talked about, each with a short report.</p>
+        </header>
+        <form id="topics-form" class="searchbar compact">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="topics-input" placeholder="Find topics by words…" autocomplete="off">
+        </form>
+        <div id="topics-grid" class="grid"></div>
+      </section>
+
+      <!-- Graph -->
+      <section id="view-graph" class="view view-graph">
+        <canvas id="graph-canvas"></canvas>
+
+        <div class="toolbar">
+          <form id="graph-form" class="searchbar compact">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <input id="graph-input" placeholder="Find an entity…" autocomplete="off">
+          </form>
+          <select id="graph-topic" aria-label="Topic"><option value="">Most connected entities</option></select>
+          <button type="button" id="graph-fit" class="icon-button" title="Fit to window">
+            <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          </button>
+          <button type="button" id="graph-reset" class="icon-button" title="Back to the overview">
+            <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+          </button>
+        </div>
+
+        <div id="graph-info" class="pill"></div>
+        <div id="graph-legend" class="legend"></div>
+        <p class="graph-hint">Drag to move · scroll to zoom · double-click to fit · click an entity for details</p>
+
+        <aside id="graph-drawer" class="drawer" hidden>
+          <button type="button" id="graph-drawer-close" class="icon-button close" aria-label="Close">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+          <div id="graph-drawer-body"></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="conversation" class="sheet">
+    <header class="sheet-head">
+      <div>
+        <h2 id="conversation-title"></h2>
+        <p id="conversation-meta" class="muted"></p>
+      </div>
+      <button type="button" class="icon-button" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <div id="conversation-body" class="sheet-body chat"></div>
+  </dialog>
+
+  <dialog id="topic" class="sheet">
+    <header class="sheet-head">
+      <div>
+        <h2 id="topic-title"></h2>
+        <p id="topic-meta" class="muted"></p>
+      </div>
+      <button type="button" class="icon-button" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <div id="topic-body" class="sheet-body"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

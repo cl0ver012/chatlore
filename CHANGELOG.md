@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and topics, and `POST /chat`, which streams sources, answer tokens, and citations as
   server-sent events.
 - The language model client can stream answers.
+- A web interface at `/` when `chatlore serve` runs: ask with streamed, cited answers, search,
+  conversations, topics, and an interactive knowledge graph drawn with a force-directed layout,
+  coloured by topic, that can be explored around an entity or a topic. Plain files, no build
+  step, nothing loaded from the internet. Guide in `docs/web.md`.
+- `GET /graph` returns part of the knowledge graph for drawing.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

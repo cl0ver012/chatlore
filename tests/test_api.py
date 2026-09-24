@@ -170,3 +170,46 @@ def test_serve_starts_uvicorn_on_this_machine_by_default(
     assert "http://127.0.0.1:8123" in local.output
     assert "Listening beyond this machine" not in local.output
     assert "Listening beyond this machine" in public.output
+
+
+def test_graph_starts_with_the_most_mentioned_linked_entities(client: TestClient) -> None:
+    graph = client.get("/graph", params={"limit": 3}).json()
+
+    ids = {node["id"] for node in graph["nodes"]}
+    assert len(graph["nodes"]) == 3
+    assert all(edge["source"] in ids and edge["target"] in ids for edge in graph["edges"])
+    assert {node["topic"] for node in graph["nodes"]} >= {topic["id"] for topic in graph["topics"]}
+
+
+def test_graph_around_an_entity_and_of_a_topic(client: TestClient) -> None:
+    parsec = client.get("/entities", params={"q": "parsec"}).json()[0]
+    around = client.get("/graph", params={"entity": parsec["id"]}).json()
+    topic = client.get("/topics").json()[0]
+    members = client.get("/graph", params={"topic": topic["id"]}).json()
+
+    assert around["nodes"][0]["name"] == "Parsec"
+    assert len(around["nodes"]) > 1
+    assert any(parsec["id"] in (edge["source"], edge["target"]) for edge in around["edges"])
+    assert len(members["nodes"]) == topic["size"]
+    assert {node["topic"] for node in members["nodes"]} == {topic["id"]}
+    assert client.get("/graph", params={"entity": "missing"}).status_code == 404
+    assert client.get("/graph", params={"topic": "missing"}).status_code == 404
+
+
+def test_the_web_interface_is_served_next_to_the_api(client: TestClient) -> None:
+    page = client.get("/")
+    script = client.get("/app.js")
+
+    assert page.status_code == 200
+    assert "<title>ChatLore</title>" in page.text
+    assert script.status_code == 200
+    assert "Graph" in script.text
+    assert client.get("/health").json()["status"] == "ok"
+
+
+def test_the_browser_checks_for_a_newer_interface_on_every_load(client: TestClient) -> None:
+    script = client.get("/app.js")
+    again = client.get("/app.js", headers={"if-none-match": script.headers["etag"]})
+
+    assert script.headers["cache-control"] == "no-cache"
+    assert again.status_code == 304

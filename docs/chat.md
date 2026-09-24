@@ -46,10 +46,10 @@ the model is not called.
 
 ## The REST API
 
-`chatlore serve` starts the API, with interactive documentation at `/docs`. It
-listens on `127.0.0.1` only, so nothing outside this machine can reach your
-library; `--host 0.0.0.0` changes that and prints a warning. `--port` sets the
-port, 8000 by default.
+`chatlore serve` starts the API, with interactive documentation at `/docs` and
+the web interface at `/` (see [web.md](web.md)). It listens on `127.0.0.1` only,
+so nothing outside this machine can reach your library; `--host 0.0.0.0` changes
+that and prints a warning. `--port` sets the port, 8000 by default.
 
 | Endpoint | What it returns |
 |---|---|
@@ -62,6 +62,7 @@ port, 8000 by default.
 | `GET /entities/{id}` | An entity with its descriptions, other names, topic, relationships, and conversations |
 | `GET /topics?q=...` | Topics matching the words, or all topics, largest first |
 | `GET /topics/{id}` | A topic's report and its entities |
+| `GET /graph` | Entities, the links among them, and their topics, for drawing; `entity`, `topic`, `limit` |
 | `POST /chat` | A streamed answer, below |
 
 ### Streaming chat
