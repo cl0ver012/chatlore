@@ -58,14 +58,21 @@ class FastEmbedEmbedder:
             os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
             try:
                 from fastembed import TextEmbedding  # heavy, so loaded on first use
+                from loguru import logger  # fastembed's logger
 
                 cache = str(self._cache_dir) if self._cache_dir is not None else None
+                # Before the first download, fastembed logs errors about the missing
+                # model, which is expected, so they are muted for this attempt.
+                logger.disable("fastembed")
                 try:
                     # Once the model is on disk, load it without asking the hub anything:
                     # faster, silent, and it keeps search working offline.
                     self._model = TextEmbedding(self.name, cache_dir=cache, local_files_only=True)
                 except Exception:
+                    logger.enable("fastembed")
                     self._model = TextEmbedding(self.name, cache_dir=cache)
+                finally:
+                    logger.enable("fastembed")
             except Exception as error:
                 raise EmbeddingError(
                     f"could not load embedding model '{self.name}': {error}"
