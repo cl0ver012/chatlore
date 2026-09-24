@@ -12,9 +12,12 @@ the JSON file itself. Importing is idempotent: run it again after a fresh
 export and only new or changed conversations are written.
 
 Everything lands in `~/.chatlore/conversations/<source>/<id>.json` (override
-the location with `CHATLORE_HOME`). The files are plain JSON and stay readable
+the location with `--home` or `CHATLORE_HOME`). The files are plain JSON and stay readable
 without ChatLore. The same import also updates `~/.chatlore/chatlore.db`, a
 SQLite database holding the graph and the search indexes.
+
+An archive written by `chatlore export` is recognised too, and brings its
+knowledge graph and caches along; see [export.md](export.md).
 
 ## Searching
 
