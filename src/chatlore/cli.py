@@ -628,6 +628,18 @@ def serve(
     uvicorn.run(create_app(), host=host, port=port, log_level="warning")
 
 
+@app.command()
+def mcp() -> None:
+    """Serve the library to AI assistants over MCP, on standard input and output.
+
+    MCP clients such as Claude Desktop, Claude Code, and Cursor start this command
+    themselves; see docs/mcp.md. Nothing is printed, since the output is the protocol.
+    """
+    from chatlore.mcp_server import create_server  # loaded here, like the web stack
+
+    create_server().run()
+
+
 def _progress() -> Progress:
     return Progress(
         TextColumn("{task.description}"),
