@@ -11,7 +11,8 @@ and Markdown exports land in a local library and a SQLite graph store you can
 search from the terminal by words, by meaning, or both. A language model turns
 them into a knowledge graph of entities, relationships, and topics that you can
 browse and search, and you can ask questions and get answers with sources, in
-the terminal, over a REST API, or in a web interface with a graph explorer.
+the terminal, over a REST API, or in a web interface with a graph explorer. AI
+assistants such as Claude and Cursor can search it too, through an MCP server.
 The roadmap below shows what comes next.
 
 ## Try it
@@ -30,6 +31,7 @@ uv run chatlore topics                                    # what the conversatio
 uv run chatlore entity "postgres"                         # one entity and where it came up
 uv run chatlore ask "why was my query slow?"               # an answer with sources
 uv run chatlore serve                                     # web UI and API on http://127.0.0.1:8000
+uv run chatlore mcp                                       # tools for Claude, Cursor, and other MCP clients
 uv run chatlore stats
 ```
 
@@ -39,7 +41,8 @@ kept, and the known limits are in [docs/importers.md](docs/importers.md).
 Extraction and chat use any OpenAI-compatible model, OpenRouter by default;
 see [docs/models.md](docs/models.md). The knowledge graph is described in
 [docs/extraction.md](docs/extraction.md), chat and the API in
-[docs/chat.md](docs/chat.md), and the web interface in [docs/web.md](docs/web.md).
+[docs/chat.md](docs/chat.md), the web interface in [docs/web.md](docs/web.md),
+and setting up assistants over MCP in [docs/mcp.md](docs/mcp.md).
 
 ## What ChatLore will do
 
@@ -72,7 +75,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M4 | Entity, topic, and fact extraction with provenance | entities and topics done; facts later |
 | M5 | REST API with streaming chat | done |
 | M6 | Web UI: conversations, graph explorer, chat | basic version done |
-| M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | planned |
+| M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done for local assistants; ChatGPT with the hosted demo |
 | M8 | FalkorDB backend | planned |
 | M9 | Hosted demo | planned |
 | M10 | v0.1.0 release | planned |
