@@ -68,3 +68,8 @@ footer used is `Closes #<issue>` when a commit resolves an issue.
 Never commit real chat exports, databases, or API keys. Test fixtures are
 synthetic and live under `tests/fixtures/`. The `.gitignore` already excludes
 `exports/`, `.chatlore/`, and `.env` files.
+
+## Releases
+
+Maintainers release by pushing a version tag; the steps are in
+[docs/releasing.md](docs/releasing.md).
