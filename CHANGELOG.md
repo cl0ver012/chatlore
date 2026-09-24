@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coloured by topic, that can be explored around an entity or a topic. Plain files, no build
   step, nothing loaded from the internet. Guide in `docs/web.md`.
 - `GET /graph` returns part of the knowledge graph for drawing.
+- `chatlore mcp`, an MCP server over standard input and output, so Claude Desktop, Claude
+  Code, Cursor, and other MCP clients can use the library: `ask_context` gathers the cited
+  passages for a question, and `search`, `conversation`, `entity`, `topics`, and `topic`
+  read the rest. Read-only, and no model key needed. Setup in `docs/mcp.md`.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

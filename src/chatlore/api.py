@@ -4,7 +4,7 @@
 search, conversations, entities, topics, a drawable part of the graph, and
 chat. Chat streams server-sent events: the sources first, then the answer as it
 is written, then which sources it cited. The web interface at / is built on
-these endpoints, as the MCP server will be.
+these endpoints.
 
 Each request opens the store and closes it again, so requests never share a
 database connection across threads. The server listens on 127.0.0.1 unless told
