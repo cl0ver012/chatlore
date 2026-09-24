@@ -277,3 +277,63 @@ def test_reasoning_is_off_unless_configured(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("CHATLORE_LLM_REASONING", "extreme")
     with pytest.raises(LLMError, match="CHATLORE_LLM_REASONING"):
         llm_settings()
+
+
+def _events(*pieces: str, finish: str = "stop") -> httpx2.Response:
+    """A streamed answer as the server sends it: one server-sent event per piece."""
+    lines = []
+    for index, piece in enumerate(pieces):
+        chunk = {
+            "id": "gen-1",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "some-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": piece},
+                    "finish_reason": finish if index == len(pieces) - 1 else None,
+                }
+            ],
+        }
+        lines.append(f"data: {json.dumps(chunk)}\n\n")
+    lines.append("data: [DONE]\n\n")
+    return httpx2.Response(
+        200, content="".join(lines).encode(), headers={"content-type": "text/event-stream"}
+    )
+
+
+def test_stream_yields_the_answer_as_it_is_written(
+    make_client: Callable[[Handler], OpenAICompatibleLLM],
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return _events("Par", "sec ", "[1].")
+
+    pieces = list(make_client(handler).stream([ChatMessage("user", "Hi")], max_tokens=50))
+
+    assert pieces == ["Par", "sec ", "[1]."]
+    assert bodies[0]["stream"] is True
+    assert bodies[0]["max_tokens"] == 50
+
+
+@pytest.mark.parametrize(
+    ("response", "error", "message"),
+    [
+        (_events("", finish="stop"), LLMAnswerError, "empty answer"),
+        (_events("Half an", finish="length"), LLMAnswerError, "token limit"),
+        (httpx2.Response(401, json={"error": {"message": "No auth"}}), LLMError, "HTTP 401"),
+    ],
+)
+def test_stream_raises_the_same_errors_as_complete(
+    make_client: Callable[[Handler], OpenAICompatibleLLM],
+    response: httpx2.Response,
+    error: type[Exception],
+    message: str,
+) -> None:
+    client = make_client(lambda request: response)
+
+    with pytest.raises(error, match=message):
+        list(client.stream([ChatMessage("user", "Hi")]))

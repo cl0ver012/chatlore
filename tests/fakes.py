@@ -7,7 +7,7 @@ import itertools
 import json
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 from chatlore.llm import ChatMessage, Completion, LLMAnswerError, LLMError
 
@@ -66,6 +66,7 @@ class FakeLLM:
         self.summary_requests: list[list[str]] = []
         self.duplicate_requests: list[list[tuple[str, str]]] = []
         self.report_requests: list[list[str]] = []
+        self.chat_requests: list[str] = []
         self._broken = set(broken_requests)
         self._empty = set(empty_requests)
         self._fail_on = fail_on_request
@@ -169,6 +170,23 @@ class FakeLLM:
                 for a, b in itertools.pairwise(names)
             ],
         }
+
+    def stream(
+        self, messages: Sequence[ChatMessage], *, max_tokens: int | None = None
+    ) -> Iterator[str]:
+        """Answer a chat request by naming each source's title and citing it."""
+        content = messages[-1].content
+        with self._lock:
+            self._calls += 1
+            number = self._calls
+            self.chat_requests.append(content)
+        if number == self._fail_on:
+            raise LLMError("fake model is unreachable")
+        if number in self._empty:
+            raise LLMAnswerError("fake model returned an empty answer")
+        yield "From your conversations: "
+        for index, title in re.findall(r"^\[(\d+)\] (.+?)(?: \(.*\))?$", content, re.MULTILINE):
+            yield f"{title} [{index}]. "
 
     def close(self) -> None:
         pass

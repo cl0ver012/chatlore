@@ -19,6 +19,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 from rich.table import Table
 
 from chatlore import __version__
+from chatlore.chat import MAX_SOURCES, answer, cited, retrieve
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
 from chatlore.extraction import ExtractionCache, entity_key
 from chatlore.importers import (
@@ -538,6 +539,93 @@ def _find_entity(store: GraphStore, name: str) -> Node | None:
         if entity_key(str(node.props["name"])) == exact:
             return node
     return nodes[0] if nodes else None
+
+
+@app.command()
+def ask(
+    question: Annotated[str, typer.Argument(help="What you want to know.")],
+    sources: Annotated[
+        int, typer.Option("--sources", "-n", min=1, max=20, help="Passages to answer from.")
+    ] = MAX_SOURCES,
+) -> None:
+    """Answer a question from your conversations, citing the passages used."""
+    home = default_home()
+    with open_store(home) as store:
+        if store.count_nodes(Label.CHUNK) == 0:
+            console.print(
+                "Nothing to answer from yet. Run `chatlore import` and `chatlore process`."
+            )
+            return
+        embedding = None
+        if store.count_embeddings() > 0:
+            try:
+                embedding = normalise(make_embedder(home).embed_query(question))
+            except EmbeddingError as error:
+                console.print(f"[red]{error}[/red]")
+                raise typer.Exit(code=1) from error
+        else:
+            console.print(
+                "[dim]No embeddings yet, so only names in the question are matched. "
+                "Run `chatlore process` for better answers.[/dim]"
+            )
+        context = retrieve(store, question, embedding, limit=sources)
+    if context.empty:
+        console.print("Nothing in your conversations matches that question.")
+        return
+
+    try:
+        llm = make_llm()
+    except LLMError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    written: list[str] = []
+    try:
+        for piece in answer(llm, context):
+            written.append(piece)
+            console.print(piece, end="", markup=False, highlight=False, soft_wrap=True)
+    except LLMError as error:
+        console.print()
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    finally:
+        llm.close()
+    console.print()
+
+    used = cited("".join(written), context) or list(context.sources)
+    console.print()
+    console.print("[bold]Sources[/bold]")
+    for source in used:
+        details = " | ".join(part for part in (source.source, source.date) if part)
+        console.print(
+            f"  {escape(f'[{source.number}]')} {escape(source.title or '(untitled)')}"
+            f"  [dim]{details}[/dim]"
+        )
+
+
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+@app.command()
+def serve(
+    host: Annotated[
+        str, typer.Option("--host", help="Address to listen on; this machine only by default.")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int, typer.Option("--port", min=1, max=65535, help="Port to listen on.")
+    ] = 8000,
+) -> None:
+    """Serve the REST API with streaming chat. Interactive docs are at /docs."""
+    import uvicorn  # loaded here so other commands start without the web stack
+
+    from chatlore.api import create_app
+
+    if host not in _LOCAL_HOSTS:
+        console.print(
+            "[yellow]Listening beyond this machine: anyone who can reach this address "
+            "can read your library.[/yellow]"
+        )
+    console.print(f"ChatLore API on http://{host}:{port}  (docs: http://{host}:{port}/docs)")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
 
 
 def _progress() -> Progress:
