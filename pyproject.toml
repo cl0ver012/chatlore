@@ -32,6 +32,7 @@ classifiers = [
 dependencies = [
   "fastapi>=0.141",
   "fastembed>=0.4",
+  "mcp>=2.2",
   "networkx>=3.7",
   "openai>=3.17",
   "pydantic>=2.9",
