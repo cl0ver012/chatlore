@@ -205,3 +205,11 @@ def test_the_web_interface_is_served_next_to_the_api(client: TestClient) -> None
     assert script.status_code == 200
     assert "Graph" in script.text
     assert client.get("/health").json()["status"] == "ok"
+
+
+def test_the_browser_checks_for_a_newer_interface_on_every_load(client: TestClient) -> None:
+    script = client.get("/app.js")
+    again = client.get("/app.js", headers={"if-none-match": script.headers["etag"]})
+
+    assert script.headers["cache-control"] == "no-cache"
+    assert again.status_code == 304

@@ -21,6 +21,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.responses import Response
+from starlette.types import Scope
 
 from chatlore import __version__
 from chatlore.chat import MAX_SOURCES, Context, Source, answer, cited, retrieve
@@ -32,6 +34,19 @@ from chatlore.store import EdgeType, GraphStore, Label, Node, open_store
 
 WEB = Path(__file__).parent / "web"
 """The web interface's files, served at /."""
+
+
+class _WebFiles(StaticFiles):
+    """The interface's files, which the browser checks again on every load.
+
+    Browsers otherwise keep an old copy for a while, so an upgrade would show the
+    previous interface. Checking costs a "not modified" reply when nothing changed.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 class ChatRequest(BaseModel):
@@ -395,5 +410,5 @@ def create_app(home: Path | None = None) -> FastAPI:
 
     # The web interface: plain files, no build step. Mounted last, so every API
     # route above takes precedence over a file of the same name.
-    app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
+    app.mount("/", _WebFiles(directory=WEB, html=True), name="web")
     return app
