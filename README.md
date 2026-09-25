@@ -30,12 +30,6 @@ built, so search, topics, and the graph explorer work at once, with no export
 and no API key. It lives in `~/.chatlore-demo`, apart from your own library.
 Asking questions also needs a model key; see [docs/models.md](docs/models.md).
 
-Until the first release is on PyPI, run it from GitHub instead:
-
-```bash
-uvx --from git+https://github.com/cl0ver012/chatlore chatlore demo
-```
-
 ## Use it on your own conversations
 
 ```bash
@@ -55,9 +49,7 @@ chatlore export chatlore.zip                         # the whole library in one 
 chatlore stats
 ```
 
-Before the first PyPI release, install from GitHub with
-`uv tool install git+https://github.com/cl0ver012/chatlore`. The library is
-kept in `~/.chatlore`; `--home <folder>` or `CHATLORE_HOME` picks another.
+The library is kept in `~/.chatlore`; `--home <folder>` or `CHATLORE_HOME` picks another.
 
 The source is detected from the file. Importing is idempotent, so re-running it
 after a fresh export only adds what changed. How to get each export, what is
@@ -101,7 +93,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M5 | REST API with streaming chat | done |
 | M6 | Web UI: conversations, graph explorer, chat | basic version done |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done for local assistants; ChatGPT with the hosted demo |
-| M8 | Easy to try: PyPI package, demo library, export and import | done; v0.1.0 on PyPI next |
+| M8 | Easy to try: PyPI package, demo library, export and import | done, v0.1.0 |
 | M9 | Hosted demo | planned |
 | M10 | FalkorDB backend | planned |
 

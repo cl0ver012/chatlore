@@ -23,9 +23,8 @@ entities and topics that the `entity` and `topic` tools use.
 ## Setting it up
 
 The assistant starts `chatlore mcp` itself, so it needs to find the `chatlore`
-command. Either install it with `uv tool install chatlore` (before the first
-PyPI release, `uv tool install git+https://github.com/cl0ver012/chatlore`), or
-run it from a clone with `uv --directory /path/to/chatlore run chatlore mcp`. Desktop apps do
+command. Either install it with `uv tool install chatlore`, or run it from a
+clone with `uv --directory /path/to/chatlore run chatlore mcp`. Desktop apps do
 not always see the same `PATH` as your terminal; if one cannot start the server,
 give the full path to `chatlore` (`where chatlore` on Windows, `which chatlore`
 elsewhere).
