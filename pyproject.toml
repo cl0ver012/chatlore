@@ -1,6 +1,6 @@
 [project]
 name = "chatlore"
-version = "0.0.1"
+version = "0.1.0"
 description = "All your AI conversations, one graph, one chat. A local-first graph knowledge base built from ChatGPT, Claude, and Gemini exports."
 readme = "README.md"
 requires-python = ">=3.12"
