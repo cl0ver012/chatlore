@@ -83,6 +83,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Code, Cursor, and other MCP clients can use the library: `ask_context` gathers the cited
   passages for a question, and `search`, `conversation`, `entity`, `topics`, and `topic`
   read the rest. Read-only, and no model key needed. Setup in `docs/mcp.md`.
+- `chatlore demo` loads a made-up library of 32 conversations, with its knowledge graph already
+  built, into `~/.chatlore-demo` and opens the web interface on it. No export and no API key
+  needed, and the real library is not touched.
+- `chatlore export` writes the whole library into one archive: conversations, knowledge graph,
+  and the cached embeddings and model answers. `chatlore import` recognises an archive and
+  restores it without model calls, into an empty library or next to other conversations.
+  `chatlore export --markdown` writes one readable Markdown file per conversation. Guide in
+  `docs/export.md`.
+- `chatlore --home <folder>` picks the library for any command, like `CHATLORE_HOME`.
+- CI builds the package, installs the wheel, and runs the demo from it. A Release workflow
+  publishes a tagged version to PyPI through trusted publishing and creates a GitHub release;
+  steps in `docs/releasing.md`.
 - CLI output shows paths relative to the home directory.
 
 ### Changed

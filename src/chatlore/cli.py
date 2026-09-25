@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import sys
+import threading
+import webbrowser
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,6 +22,13 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 from rich.table import Table
 
 from chatlore import __version__
+from chatlore.archive import (
+    ArchiveError,
+    export_archive,
+    export_markdown,
+    import_archive,
+    is_archive,
+)
 from chatlore.chat import MAX_SOURCES, answer, cited, retrieve
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
 from chatlore.extraction import ExtractionCache, entity_key
@@ -31,7 +41,7 @@ from chatlore.importers import (
 )
 from chatlore.library import AddOutcome, Library
 from chatlore.llm import OPENROUTER_KEY_ENV, LLMError, llm_settings, make_llm
-from chatlore.paths import default_home
+from chatlore.paths import HOME_ENV, default_home, demo_home
 from chatlore.pipeline import (
     EmbeddingModelMismatchError,
     pending_duplicates,
@@ -60,6 +70,8 @@ from chatlore.store import (
 __all__ = ["app", "default_home", "display_path", "load_env_file", "run"]
 
 _MAX_ISSUES_SHOWN = 10
+DEMO_ARCHIVE = Path(__file__).parent / "data" / "demo.zip"
+"""A made-up library, with its knowledge graph built, for ``chatlore demo``."""
 
 app = typer.Typer(
     name="chatlore",
@@ -113,8 +125,18 @@ def main(
             is_eager=True,
         ),
     ] = False,
+    home: Annotated[
+        Path | None,
+        typer.Option(
+            "--home",
+            help="Library folder to use instead of CHATLORE_HOME or ~/.chatlore.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """ChatLore: a local-first graph knowledge base built from your AI conversations."""
+    if home is not None:
+        os.environ[HOME_ENV] = str(home.expanduser())
 
 
 @app.command()
@@ -159,7 +181,10 @@ def import_(
         typer.Option(
             "--source",
             "-s",
-            help="chatgpt, claude, gemini, markdown, or auto to detect it from the content.",
+            help=(
+                "chatgpt, claude, gemini, markdown, chatlore for an archive from "
+                "`chatlore export`, or auto to detect it from the content."
+            ),
         ),
     ] = "auto",
     dry_run: Annotated[
@@ -168,6 +193,9 @@ def import_(
     ] = False,
 ) -> None:
     """Import an export into the local library. Safe to run repeatedly."""
+    if source == "chatlore" or (source == "auto" and is_archive(path)):
+        _import_archive(path, dry_run)
+        return
     issues: list[ImportIssue] = []
     outcomes: Counter[str] = Counter()
     messages = 0
@@ -205,6 +233,68 @@ def import_(
     _print_issues(issues)
     if not dry_run:
         console.print(f"Library: {display_path(default_home())}")
+
+
+def _import_archive(path: Path, dry_run: bool) -> None:
+    try:
+        report = import_archive(path, default_home(), dry_run=dry_run)
+    except ArchiveError as error:
+        console.print(f"[red]Import failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    table = Table(title="archive import" + (" (dry run)" if dry_run else ""), show_header=False)
+    table.add_column("key", style="bold")
+    table.add_column("value", justify="right")
+    if dry_run:
+        table.add_row("conversations parsed", str(report.outcomes["parsed"]))
+    else:
+        for outcome in AddOutcome:
+            table.add_row(outcome.value, str(report.outcomes[outcome.value]))
+    table.add_row("messages", str(report.messages))
+    table.add_row("graph nodes", str(report.nodes))
+    table.add_row("graph edges", str(report.edges))
+    console.print(table)
+    if not dry_run:
+        console.print(f"Library: {display_path(default_home())}")
+        console.print("Run `chatlore process` to restore the embeddings from the archive.")
+
+
+@app.command()
+def export(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Archive file to write, or with --markdown a folder."),
+    ],
+    markdown: Annotated[
+        bool,
+        typer.Option("--markdown", help="Write one readable Markdown file per conversation."),
+    ] = False,
+) -> None:
+    """Export the library: one archive to import elsewhere, or Markdown to read anywhere.
+
+    The archive holds the conversations, the knowledge graph, and the cached
+    embeddings and model answers; `chatlore import` restores it without model calls.
+    """
+    home = default_home()
+    if not Library(home).stats():
+        console.print("The library is empty. Run `chatlore import <path>` to add an export.")
+        raise typer.Exit(code=1)
+    if markdown:
+        written = export_markdown(Library(home), path)
+        console.print(f"Wrote {written} conversations as Markdown to {display_path(path)}")
+        return
+    if path.is_dir():
+        console.print(
+            f"[red]{escape(str(path))} is a folder; name a file such as chatlore.zip[/red]"
+        )
+        raise typer.Exit(code=1)
+    report = export_archive(home, path)
+    size = path.stat().st_size / 1_000_000
+    console.print(
+        f"Wrote {report.conversations} conversations, {report.nodes} graph nodes, and "
+        f"{report.edges} edges to {display_path(path)} ({size:.1f} MB)"
+    )
+    console.print("Import it anywhere with `chatlore import <file>`.")
 
 
 @app.command()
@@ -638,6 +728,99 @@ def mcp() -> None:
     from chatlore.mcp_server import create_server  # loaded here, like the web stack
 
     create_server().run()
+
+
+_DOCS = "https://github.com/cl0ver012/chatlore/blob/main/docs"
+
+
+@app.command()
+def demo(
+    serve_web: Annotated[
+        bool, typer.Option("--serve/--no-serve", help="Open the web interface on it afterwards.")
+    ] = True,
+    port: Annotated[
+        int, typer.Option("--port", min=1, max=65535, help="Port for the web interface.")
+    ] = 8000,
+) -> None:
+    """Try ChatLore on a made-up library, with no export and no API key.
+
+    Loads invented conversations, with their knowledge graph already built,
+    into ~/.chatlore-demo and opens the web interface on them. Your own library
+    is not touched.
+    """
+    home = demo_home()
+    os.environ[HOME_ENV] = str(home)
+    import_archive(DEMO_ARCHIVE, home)
+    embedder = make_embedder(home)
+    with open_store(home) as store:
+        sync_chunks(store, Library(home))
+        try:
+            with (
+                EmbeddingCache(home / "cache" / "embeddings.db") as cache,
+                console.status("Preparing search"),
+            ):
+                sync_embeddings(store, embedder, cache)
+        except (EmbeddingError, EmbeddingModelMismatchError) as error:
+            console.print(f"[red]{error}[/red]")
+            raise typer.Exit(code=1) from error
+        counts = [store.count_nodes(label) for label in (Label.CONVERSATION, Label.ENTITY)]
+        counts.append(store.count_nodes(Label.TOPIC))
+
+    where = display_path(home)
+    console.print(
+        f"[bold]Demo library ready[/bold] in {where}: {counts[0]} conversations, "
+        f"{counts[1]} entities, {counts[2]} topics."
+    )
+    console.print(
+        "They are made up: a year of a developer's chats with ChatGPT and Claude about "
+        "a side project, a home lab, learning Rust, travel, and more."
+    )
+    if _has_llm_key():
+        console.print("Search, topics, the graph, and questions all work.")
+    else:
+        console.print(
+            "Search, topics, and the graph work as they are. Asking questions needs a "
+            f"model key: see {_DOCS}/models.md"
+        )
+    console.print()
+    console.print("Try it in the terminal, or from an AI assistant, too:")
+    for example in (
+        'search "litestream"',
+        'entity "Tidewater"',
+        'ask "why did I move Tidewater off Postgres?"',
+    ):
+        console.print(
+            f"  chatlore --home {where} {example}", markup=False, highlight=False, soft_wrap=True
+        )
+    console.print(
+        f"  claude mcp add chatlore-demo -- chatlore --home {where} mcp",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+    console.print(f"Delete {where} when you are done with it.")
+    if not serve_web:
+        return
+
+    console.print()
+    try:
+        with console.status("Loading the embedding model (a 65 MB download the first time)"):
+            embedder.embed_query("warm up")
+    except EmbeddingError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    opener = threading.Timer(1.5, webbrowser.open, [f"http://127.0.0.1:{port}"])
+    opener.daemon = True
+    opener.start()
+    serve(host="127.0.0.1", port=port)
+
+
+def _has_llm_key() -> bool:
+    try:
+        settings = llm_settings()
+    except LLMError:
+        return False
+    return settings.api_key is not None or not settings.is_openrouter
 
 
 def _progress() -> Progress:

@@ -23,15 +23,16 @@ entities and topics that the `entity` and `topic` tools use.
 ## Setting it up
 
 The assistant starts `chatlore mcp` itself, so it needs to find the `chatlore`
-command. Either install it, for example with
-`uv tool install git+https://github.com/cl0ver012/chatlore`, or run it from a
-clone with `uv --directory /path/to/chatlore run chatlore mcp`. Desktop apps do
+command. Either install it with `uv tool install chatlore` (before the first
+PyPI release, `uv tool install git+https://github.com/cl0ver012/chatlore`), or
+run it from a clone with `uv --directory /path/to/chatlore run chatlore mcp`. Desktop apps do
 not always see the same `PATH` as your terminal; if one cannot start the server,
 give the full path to `chatlore` (`where chatlore` on Windows, `which chatlore`
 elsewhere).
 
 The library is the default one (`~/.chatlore`, or `CHATLORE_HOME`). To use
-another, set `CHATLORE_HOME` in the server's environment as below.
+another, pass `--home` before `mcp`, or set `CHATLORE_HOME` in the server's
+environment as below.
 
 **Claude Code**
 
@@ -40,7 +41,12 @@ claude mcp add chatlore -- chatlore mcp
 claude mcp add chatlore -e CHATLORE_HOME=/path/to/library -- chatlore mcp   # another library
 ```
 
-Add `--scope user` to have it in every project.
+Add `--scope user` to have it in every project. To try it on the made-up
+library from `chatlore demo` first:
+
+```bash
+claude mcp add chatlore-demo -- chatlore --home ~/.chatlore-demo mcp
+```
 
 **Claude Desktop.** Settings, Developer, Edit Config opens
 `claude_desktop_config.json`. Add the server and restart Claude Desktop:

@@ -45,3 +45,26 @@ jobs:
 
       - name: Test
         run: uv run pytest --cov --cov-report=term-missing
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build
+        run: uv build
+
+      - name: Install the wheel and try the demo
+        run: |
+          wheel=$(ls dist/*.whl)
+          uvx --from "$wheel" chatlore --version
+          uvx --from "$wheel" chatlore demo --no-serve
+          uvx --from "$wheel" chatlore --home ~/.chatlore-demo search "litestream"
