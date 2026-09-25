@@ -139,6 +139,9 @@ nav button.active { background: var(--accent-soft); color: var(--accent-text); }
 .library dl div { display: flex; justify-content: space-between; font-size: 13px; }
 .library dt { color: var(--muted); }
 .library dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.demo-note { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.45; color: var(--muted); }
+.demo-note code { font-size: 11.5px; color: var(--text-2); }
+.demo-note a { color: var(--accent-text); }
 
 main { overflow-y: auto; position: relative; }
 

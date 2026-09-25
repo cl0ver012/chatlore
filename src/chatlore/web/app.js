@@ -128,6 +128,15 @@ api("/stats")
   })
   .catch(() => {});
 
+// A public server, such as the hosted demo, says so.
+api("/health")
+  .then((health) => {
+    if (!health.public) return;
+    $("#ask-hero p").textContent = "A demo on made-up conversations. Every answer cites the chats it came from.";
+    $("#demo-note").hidden = false;
+  })
+  .catch(() => {});
+
 // -- conversations ---------------------------------------------------------------------
 
 async function openConversation(id, messageId) {
