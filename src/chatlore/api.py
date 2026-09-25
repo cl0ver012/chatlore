@@ -6,28 +6,39 @@ chat. Chat streams server-sent events: the sources first, then the answer as it
 is written, then which sources it cited. The web interface at / is built on
 these endpoints.
 
+The MCP server is served at /mcp too, over streamable HTTP, for assistants
+that connect to a URL instead of starting ``chatlore mcp``.
+
 Each request opens the store and closes it again, so requests never share a
 database connection across threads. The server listens on 127.0.0.1 unless told
-otherwise, because the library is private.
+otherwise, because the library is private. A public server, such as the hosted
+demo, limits how many questions reach the language model, since each one is paid
+for with the host's key.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import threading
+import time
+from collections import deque
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.staticfiles import StaticFiles
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 from starlette.types import Scope
 
 from chatlore import __version__
-from chatlore.chat import MAX_SOURCES, Context, Source, answer, cited, retrieve
+from chatlore.chat import MAX_SOURCES, ChatLimits, Context, Source, answer, cited, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
 from chatlore.llm import LLMError, make_llm
+from chatlore.mcp_server import create_server
 from chatlore.paths import default_home
 from chatlore.search import hybrid_search
 from chatlore.store import EdgeType, GraphStore, Label, Node, open_store
@@ -47,6 +58,54 @@ class _WebFiles(StaticFiles):
         response = await super().get_response(path, scope)
         response.headers["Cache-Control"] = "no-cache"
         return response
+
+
+_HOUR = 3600.0
+_MAX_VISITORS = 10_000
+
+
+class _Allowance:
+    """Counts questions against ``ChatLimits``. Shared by the request threads."""
+
+    def __init__(self, limits: ChatLimits, clock: Callable[[], float] = time.time) -> None:
+        self.limits = limits
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._visitors: dict[str, deque[float]] = {}
+        self._day = ""
+        self._today = 0
+
+    def take(self, visitor: str) -> str | None:
+        """Count a question from ``visitor``, or say why it cannot be asked now."""
+        now = self._clock()
+        day = time.strftime("%Y-%m-%d", time.gmtime(now))
+        with self._lock:
+            if day != self._day:
+                self._day, self._today = day, 0
+            asked = self._visitors.setdefault(visitor, deque())
+            while asked and asked[0] <= now - _HOUR:
+                asked.popleft()
+            if len(asked) >= self.limits.per_visitor_hour:
+                return (
+                    f"This demo answers {self.limits.per_visitor_hour} questions an hour for "
+                    "each visitor. Try again later, or install ChatLore to ask your own "
+                    "conversations: pip install chatlore"
+                )
+            if self._today >= self.limits.per_day:
+                return (
+                    "This demo has answered all the questions it can today. Try again "
+                    "tomorrow, or install ChatLore to ask your own conversations: "
+                    "pip install chatlore"
+                )
+            asked.append(now)
+            self._today += 1
+            if len(self._visitors) > _MAX_VISITORS:
+                self._visitors = {
+                    key: times
+                    for key, times in self._visitors.items()
+                    if times and times[-1] > now - _HOUR
+                }
+        return None
 
 
 class ChatRequest(BaseModel):
@@ -90,15 +149,39 @@ def _topic(node: Node, entities: int | None = None) -> dict[str, Any]:
     }
 
 
-def create_app(home: Path | None = None) -> FastAPI:
-    """The API over the library in ``home``, or the default ChatLore home."""
+def create_app(
+    home: Path | None = None, *, public: bool = False, limits: ChatLimits | None = None
+) -> FastAPI:
+    """The API over the library in ``home``, or the default ChatLore home.
+
+    A ``public`` app says so at /health, which makes the web interface show a
+    demo note, and accepts MCP requests for any host name, since it is meant to
+    be reached from the internet. Otherwise /mcp only answers requests addressed
+    to this machine, which keeps other websites from reaching it through the
+    browser. ``limits`` caps the questions sent to the language model.
+    """
     library = home or default_home()
+    assistants = create_server(library)
+    security = TransportSecuritySettings(enable_dns_rebinding_protection=False) if public else None
+    # Stateless, with plain JSON replies: any worker can answer any request, and
+    # no tool streams its result.
+    mcp_app = assistants.streamable_http_app(
+        stateless_http=True, json_response=True, transport_security=security
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        async with assistants.session_manager.run():
+            yield
+
     app = FastAPI(
         title="ChatLore",
         version=__version__,
         description="All your AI conversations, one graph, one chat.",
+        lifespan=lifespan,
     )
     embedders: list[Embedder] = []
+    allowance = _Allowance(limits) if limits is not None else None
 
     def store() -> GraphStore:
         return open_store(library)
@@ -115,8 +198,8 @@ def create_app(home: Path | None = None) -> FastAPI:
             raise HTTPException(503, str(error)) from error
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "version": __version__}
+    def health() -> dict[str, Any]:
+        return {"status": "ok", "version": __version__, "public": public}
 
     @app.get("/stats")
     def stats() -> dict[str, int]:
@@ -370,7 +453,7 @@ def create_app(home: Path | None = None) -> FastAPI:
             }
 
     @app.post("/chat", response_class=EventSourceResponse)
-    def chat(request: ChatRequest) -> Iterator[ServerSentEvent]:
+    def chat(request: ChatRequest, http: Request) -> Iterator[ServerSentEvent]:
         """Answer a question, streaming `sources`, then `token`s, then `done` or `error`.
 
         `sources` lists the numbered passages the answer may cite. Each `token`
@@ -390,6 +473,11 @@ def create_app(home: Path | None = None) -> FastAPI:
         if context.empty:
             yield ServerSentEvent(event="done", data={"cited": [], "found": False})
             return
+        if allowance is not None:
+            refusal = allowance.take(http.client.host if http.client else "unknown")
+            if refusal is not None:
+                yield ServerSentEvent(event="error", data={"message": refusal})
+                return
         try:
             llm = make_llm()
         except LLMError as error:
@@ -407,6 +495,9 @@ def create_app(home: Path | None = None) -> FastAPI:
             llm.close()
         numbers = [source.number for source in cited("".join(written), context)]
         yield ServerSentEvent(event="done", data={"cited": numbers, "found": True})
+
+    # POST /mcp for assistants, next to the API.
+    app.router.routes.extend(mcp_app.routes)
 
     # The web interface: plain files, no build step. Mounted last, so every API
     # route above takes precedence over a file of the same name.

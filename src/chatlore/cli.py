@@ -12,7 +12,7 @@ from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from dotenv import find_dotenv, load_dotenv
@@ -29,7 +29,7 @@ from chatlore.archive import (
     import_archive,
     is_archive,
 )
-from chatlore.chat import MAX_SOURCES, answer, cited, retrieve
+from chatlore.chat import MAX_SOURCES, ChatLimits, answer, cited, retrieve
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
 from chatlore.extraction import ExtractionCache, entity_key
 from chatlore.importers import (
@@ -703,19 +703,59 @@ def serve(
     port: Annotated[
         int, typer.Option("--port", min=1, max=65535, help="Port to listen on.")
     ] = 8000,
+    public: Annotated[
+        bool,
+        typer.Option(
+            "--public",
+            help=(
+                "Serve a public demo behind a proxy: limit the questions sent to the "
+                "model, take visitors' addresses from the proxy, and show a demo note."
+            ),
+        ),
+    ] = False,
+    questions_per_hour: Annotated[
+        int,
+        typer.Option(
+            "--questions-per-hour",
+            min=1,
+            help="With --public: questions one visitor may ask per hour.",
+        ),
+    ] = ChatLimits().per_visitor_hour,
+    questions_per_day: Annotated[
+        int,
+        typer.Option(
+            "--questions-per-day",
+            min=1,
+            help="With --public: questions all visitors may ask per day.",
+        ),
+    ] = ChatLimits().per_day,
 ) -> None:
-    """Serve the REST API with streaming chat. Interactive docs are at /docs."""
+    """Serve the web interface, the REST API, and MCP at /mcp. API docs are at /docs."""
     import uvicorn  # loaded here so other commands start without the web stack
 
     from chatlore.api import create_app
 
-    if host not in _LOCAL_HOSTS:
+    options: dict[str, Any] = {}
+    if public:
+        limits = ChatLimits(per_visitor_hour=questions_per_hour, per_day=questions_per_day)
+        application = create_app(public=True, limits=limits)
+        # The proxy in front says who the visitor is; without it every visitor
+        # would share the proxy's address, and its limit.
+        options = {"proxy_headers": True, "forwarded_allow_ips": "*"}
         console.print(
-            "[yellow]Listening beyond this machine: anyone who can reach this address "
-            "can read your library.[/yellow]"
+            f"Public demo of {display_path(default_home())}: anyone who can reach it can read "
+            f"this library and ask {questions_per_hour} questions an hour each, "
+            f"{questions_per_day} a day in all."
         )
+    else:
+        application = create_app()
+        if host not in _LOCAL_HOSTS:
+            console.print(
+                "[yellow]Listening beyond this machine: anyone who can reach this address "
+                "can read your library.[/yellow]"
+            )
     console.print(f"ChatLore API on http://{host}:{port}  (docs: http://{host}:{port}/docs)")
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    uvicorn.run(application, host=host, port=port, log_level="warning", **options)
 
 
 @app.command()

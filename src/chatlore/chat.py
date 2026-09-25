@@ -31,6 +31,17 @@ NEAR_CANDIDATES = 25
 MAX_ANSWER_TOKENS = 1500
 MAX_NAME_WORDS = 4
 
+
+@dataclass(frozen=True, slots=True)
+class ChatLimits:
+    """How many questions a public server sends to the language model."""
+
+    per_visitor_hour: int = 10
+    """Questions one visitor, told apart by address, may ask in any hour."""
+    per_day: int = 300
+    """Questions all visitors together may ask in a day, counted in UTC."""
+
+
 _WORD = re.compile(r"[\w][\w.+#'-]*")
 _CITATION = re.compile(r"\[(\d+)\]")
 _NOT_NAMES = frozenset(
