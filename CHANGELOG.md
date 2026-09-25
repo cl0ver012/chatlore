@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `chatlore serve --public` for hosting a demo behind a proxy: questions sent to the model are
+  limited for each visitor per hour and for everyone per day (`--questions-per-hour`,
+  `--questions-per-day`), visitors are told apart by the proxy's forwarded address, and the web
+  interface says it is a demo. `/health` reports whether a server is public.
+- `chatlore serve` also serves the MCP server at `/mcp` over streamable HTTP, for assistants
+  that connect to a URL, such as ChatGPT. A private server only answers MCP requests addressed
+  to this machine.
+- A `Dockerfile` for the hosted demo, with the demo library and embedding model built in. CI
+  builds it, starts it, and checks the web interface, the API, and a tool call over MCP. Guide
+  in `docs/hosting.md`.
+
 ## [0.1.0] - 2026-09-24
 
 ### Added

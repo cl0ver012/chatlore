@@ -80,8 +80,32 @@ project, or `.cursor/mcp.json` for one.
 
 **Other clients.** Any MCP client that starts local servers works the same way:
 the command is `chatlore` with the argument `mcp`. ChatGPT only connects to
-servers on the internet, which a private library should not be; that will come
-with the hosted demo.
+servers on the internet, so it uses the hosted demo, below.
+
+## Over HTTP
+
+`chatlore serve` serves the same tools at `/mcp` over streamable HTTP, for
+assistants that connect to a URL instead of starting a command:
+
+```bash
+chatlore serve                                                        # then:
+claude mcp add --transport http chatlore http://127.0.0.1:8000/mcp
+```
+
+On your machine, `/mcp` only answers requests addressed to `127.0.0.1` or
+`localhost`, so websites cannot reach it through your browser.
+
+The hosted demo serves its made-up library the same way at its address followed
+by `/mcp`, with no authentication (see [hosting.md](hosting.md)):
+
+- **ChatGPT**: in developer mode, add a connector with that URL and no
+  authentication.
+- **Claude**: add it as a custom connector, or in Claude Code with
+  `claude mcp add --transport http chatlore-demo <url>`.
+- **Cursor**: an `mcpServers` entry with `"url": "<url>"` instead of a command.
+
+Never put your own library on the internet this way: anyone with the address
+could read it.
 
 ## Tools
 

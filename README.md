@@ -58,8 +58,9 @@ Extraction and chat use any OpenAI-compatible model, OpenRouter by default;
 see [docs/models.md](docs/models.md). The knowledge graph is described in
 [docs/extraction.md](docs/extraction.md), chat and the API in
 [docs/chat.md](docs/chat.md), the web interface in [docs/web.md](docs/web.md),
-setting up assistants over MCP in [docs/mcp.md](docs/mcp.md), and archives and
-Markdown export in [docs/export.md](docs/export.md).
+setting up assistants over MCP in [docs/mcp.md](docs/mcp.md), archives and
+Markdown export in [docs/export.md](docs/export.md), and hosting the demo in
+[docs/hosting.md](docs/hosting.md).
 
 ## What ChatLore will do
 
