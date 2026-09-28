@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import TracebackType
+from typing import TYPE_CHECKING, Self
 from urllib.parse import urlsplit, urlunsplit
 
+from chatlore.models import Conversation
 from chatlore.store.base import (
     ConversationSummary,
     Direction,
@@ -43,6 +45,7 @@ __all__ = [
     "FALKORDB_URL_ENV",
     "STORE_ENV",
     "ConversationSummary",
+    "ConversationWriter",
     "Direction",
     "Edge",
     "EdgeType",
@@ -56,6 +59,40 @@ __all__ = [
     "drop_store",
     "open_store",
 ]
+
+
+class ConversationWriter:
+    """Upserts conversations a batch at a time, so a store on a server gets few requests.
+
+    Whatever is still waiting is written when the ``with`` block ends, even when
+    it ends with an error, so the store keeps up with the library.
+    """
+
+    def __init__(self, store: GraphStore, size: int = 200) -> None:
+        self._store = store
+        self._size = size
+        self._waiting: list[Conversation] = []
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        kind: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.flush()
+
+    def add(self, conversation: Conversation) -> None:
+        self._waiting.append(conversation)
+        if len(self._waiting) >= self._size:
+            self.flush()
+
+    def flush(self) -> None:
+        if self._waiting:
+            waiting, self._waiting = self._waiting, []
+            self._store.upsert_conversations(waiting)
 
 
 def open_store(home: Path) -> GraphStore:

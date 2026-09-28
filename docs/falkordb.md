@@ -72,12 +72,12 @@ changes made to it directly are lost on the next `chatlore index --rebuild`.
   matches can come back in a different order.
 - The server has to be running. Commands fail with a connection error when it
   is not.
-- Keep the server close: on the same machine or network. Reading pages fetch
-  what they need in a few queries, but each one waits for the network. Against
-  a free FalkorDB Cloud server a continent away, with 0.16 seconds per round
-  trip and about 20 KB per second, a search took about a second, loading the
-  demo a minute and a half, and the graph view, which downloads about 500 KB,
-  20 seconds.
+- Keep the server close: on the same machine or network. ChatLore asks for
+  what a page needs in a few queries and writes in batches, but each query
+  still waits for the network. Against a free FalkorDB Cloud server a
+  continent away, with 0.16 seconds per round trip and about 20 KB per second,
+  a search took about a second, the graph view 2.4 seconds, gathering the
+  passages for a question under a second, and loading the demo 41 seconds.
 - Each conversation takes a few round trips to the server, so importing is
   slower. On a made-up library of 12,000 notes, importing took 31 seconds
   against 8 with SQLite, chunking 26 seconds against 145, and a search the same

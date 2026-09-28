@@ -60,6 +60,8 @@ _SNIPPET_TOKENS = 16
 _UNSEARCHABLE = frozenset({"text"})
 _DIMENSION = "embedding_dimension"
 _ALL = 1_000_000_000
+_CONVERSATIONS_PER_WRITE = 200
+_VECTORS_PER_WRITE = 500
 
 # One client per server for the whole process. Connecting takes several round
 # trips, seconds to a server far away, and the web interface and MCP server open
@@ -99,8 +101,10 @@ class FalkorDBStore(GraphStore):
             if (url, graph) not in _prepared:
                 self._create_indexes()
                 _prepared.add((url, graph))
-        dimension = self.get_meta(_DIMENSION)
-        self._dimension = int(dimension) if dimension is not None else None
+        # The embeddings' dimension is read when first needed, so requests that do
+        # not touch vectors cost one round trip less.
+        self._dimension_read = False
+        self._known_dimension: int | None = None
 
     def close(self) -> None:
         """Nothing to release: the connection stays open for the next store on this server."""
@@ -242,21 +246,40 @@ class FalkorDBStore(GraphStore):
             )
         return int(rows[0][0])
 
+    def count_by_label(self) -> dict[str, int]:
+        rows = self._query("MATCH (n:Node) RETURN n._label, count(n)")
+        counts = {label: int(count) for label, count in rows}
+        return {label.value: counts.get(label.value, 0) for label in Label}
+
     # -- conversations -------------------------------------------------------
 
     def upsert_conversation(self, conversation: Conversation) -> None:
-        nodes, edges = conversation_to_graph(conversation)
-        keep = {message.id for message in conversation.messages}
-        # As in SQLite: messages still present are updated in place, so their
-        # chunks and embeddings survive; only messages that disappeared go.
-        self._delete_messages(conversation.id, keep=keep)
-        self._query(
-            f"MATCH (:Node {{_id: $id}})-[:{EdgeType.HAS_MESSAGE}]->(:Node)"
-            f"-[r:{EdgeType.REPLIES_TO}]->() DELETE r",
-            {"id": conversation.id},
-        )
-        self.upsert_nodes(nodes)
-        self.upsert_edges(edges)
+        self.upsert_conversations([conversation])
+
+    def upsert_conversations(self, conversations: Iterable[Conversation]) -> None:
+        # The last copy of a conversation given wins, as when upserting one by one.
+        latest = list({conversation.id: conversation for conversation in conversations}.values())
+        for page in _pages(latest, _CONVERSATIONS_PER_WRITE):
+            # As in SQLite: messages still present are updated in place, so their
+            # chunks and embeddings survive; only messages that disappeared go.
+            keep = {
+                conversation.id: {message.id for message in conversation.messages}
+                for conversation in page
+            }
+            self._delete_messages(keep)
+            self._query(
+                f"MATCH (c:Node)-[:{EdgeType.HAS_MESSAGE}]->(:Node)"
+                f"-[r:{EdgeType.REPLIES_TO}]->() WHERE c._id IN $ids DELETE r",
+                {"ids": list(keep)},
+            )
+            nodes: list[Node] = []
+            edges: list[Edge] = []
+            for conversation in page:
+                conversation_nodes, conversation_edges = conversation_to_graph(conversation)
+                nodes.extend(conversation_nodes)
+                edges.extend(conversation_edges)
+            self.upsert_nodes(nodes)
+            self.upsert_edges(edges)
 
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         node = self.get_node(conversation_id)
@@ -296,7 +319,7 @@ class FalkorDBStore(GraphStore):
         return summaries
 
     def delete_conversation(self, conversation_id: str) -> None:
-        self._delete_messages(conversation_id)
+        self._delete_messages({conversation_id: None})
         self.delete_nodes([conversation_id])
 
     # -- search --------------------------------------------------------------
@@ -346,24 +369,40 @@ class FalkorDBStore(GraphStore):
         return hits
 
     def set_embedding(self, node_id: str, embedding: Sequence[float]) -> None:
-        vector = [float(value) for value in embedding]
-        if not vector:
+        self.set_embeddings({node_id: embedding})
+
+    def set_embeddings(self, embeddings: Mapping[str, Sequence[float]]) -> None:
+        vectors = {
+            node_id: [float(value) for value in vector] for node_id, vector in embeddings.items()
+        }
+        if not vectors:
+            return
+        # Everything is checked before anything is written.
+        if not all(vectors.values()):
             raise ValueError("embedding is empty")
-        if self.get_node(node_id) is None:
-            raise KeyError(node_id)
-        if self._dimension is None:
+        missing = set(vectors) - self._existing(set(vectors))
+        if missing:
+            raise KeyError(sorted(missing)[0])
+        sizes = sorted({len(vector) for vector in vectors.values()})
+        dimension = self._dimension
+        if dimension is None and len(sizes) == 1:
             self._query(
                 "CREATE VECTOR INDEX FOR (n:Node) ON (n._embedding) "
-                f"OPTIONS {{dimension: {len(vector)}, similarityFunction: 'euclidean'}}"
+                f"OPTIONS {{dimension: {sizes[0]}, similarityFunction: 'euclidean'}}"
             )
-            self.set_meta(_DIMENSION, str(len(vector)))
-            self._dimension = len(vector)
-        elif len(vector) != self._dimension:
-            raise ValueError(f"embedding has {len(vector)} dimensions, store has {self._dimension}")
-        self._query(
-            "MATCH (n:Node {_id: $id}) SET n._embedding = vecf32($vector)",
-            {"id": node_id, "vector": vector},
-        )
+            self.set_meta(_DIMENSION, str(sizes[0]))
+            self._set_dimension(sizes[0])
+        elif sizes != [dimension]:
+            expected = dimension if dimension is not None else sizes[0]
+            wrong = next(size for size in sizes if size != expected)
+            raise ValueError(f"embedding has {wrong} dimensions, store has {expected}")
+        rows = [{"id": node_id, "vector": vector} for node_id, vector in vectors.items()]
+        for page in _pages(rows, _VECTORS_PER_WRITE):
+            self._query(
+                "UNWIND $rows AS row MATCH (n:Node {_id: row.id}) "
+                "SET n._embedding = vecf32(row.vector)",
+                {"rows": page},
+            )
 
     def nodes_without_embedding(self, label: str, limit: int = 100) -> list[Node]:
         rows = self._paged(
@@ -386,7 +425,7 @@ class FalkorDBStore(GraphStore):
             "MATCH (m:Meta) WHERE m.key IN $keys DELETE m",
             {"keys": [_DIMENSION, "embedding_model"]},
         )
-        self._dimension = None
+        self._set_dimension(None)
 
     def get_meta(self, key: str) -> str | None:
         rows = self._query("MATCH (m:Meta {key: $key}) RETURN m.value", {"key": key})
@@ -446,19 +485,42 @@ class FalkorDBStore(GraphStore):
             found.update(row[0] for row in rows)
         return found
 
-    def _delete_messages(self, conversation_id: str, keep: set[str] | None = None) -> None:
-        """Delete a conversation's messages, except ``keep``, along with their chunks."""
-        rows = self._query(
-            f"MATCH (:Node {{_id: $id}})-[:{EdgeType.HAS_MESSAGE}]->(m:Node) RETURN m._id",
-            {"id": conversation_id},
-        )
-        doomed = [row[0] for row in rows if not keep or row[0] not in keep]
+    @property
+    def _dimension(self) -> int | None:
+        """The dimension every embedding has, or None before the first."""
+        if not self._dimension_read:
+            value = self.get_meta(_DIMENSION)
+            self._set_dimension(int(value) if value is not None else None)
+        return self._known_dimension
+
+    def _set_dimension(self, dimension: int | None) -> None:
+        self._known_dimension = dimension
+        self._dimension_read = True
+
+    def _delete_messages(self, keep: Mapping[str, set[str] | None]) -> None:
+        """Delete messages of the conversations in ``keep``, except the ids it keeps.
+
+        The chunks of the messages deleted go with them.
+        """
+        doomed: list[str] = []
+        for page in _pages(list(keep)):
+            rows = self._paged(
+                f"MATCH (c:Node)-[:{EdgeType.HAS_MESSAGE}]->(m:Node) WHERE c._id IN $ids "
+                "RETURN c._id, m._id ORDER BY m._id",
+                {"ids": page},
+                _ALL,
+            )
+            for conversation_id, message_id in rows:
+                kept = keep[conversation_id]
+                if not kept or message_id not in kept:
+                    doomed.append(message_id)
         chunks: list[str] = []
         for page in _pages(doomed):
-            chunk_rows = self._query(
+            chunk_rows = self._paged(
                 f"MATCH (m:Node)-[:{EdgeType.HAS_CHUNK}]->(c:Node) WHERE m._id IN $ids "
-                "RETURN c._id",
+                "RETURN c._id ORDER BY c._id",
                 {"ids": page},
+                _ALL,
             )
             chunks.extend(row[0] for row in chunk_rows)
         self.delete_nodes([*chunks, *doomed])
@@ -562,9 +624,9 @@ def _name(value: str) -> str:
     return value
 
 
-def _pages[T](items: list[T]) -> Iterator[list[T]]:
-    for start in range(0, len(items), _PAGE):
-        yield items[start : start + _PAGE]
+def _pages[T](items: list[T], size: int = _PAGE) -> Iterator[list[T]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
 
 
 def _dumps(value: dict[str, Any]) -> str:

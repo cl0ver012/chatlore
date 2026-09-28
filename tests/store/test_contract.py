@@ -304,3 +304,71 @@ def test_nodes_and_neighbors_can_be_fetched_many_at_once(store: GraphStore) -> N
         "c": store.neighbors("c", direction="in")
     }
     assert store.neighbors_many([]) == {}
+
+
+def test_edges_many_are_the_edges_of_neighbors_many(store: GraphStore) -> None:
+    store.upsert_nodes([Node("a", Label.ENTITY), Node("b", Label.ENTITY), Node("c", Label.TOPIC)])
+    store.upsert_edges(
+        [
+            Edge("a", EdgeType.RELATED_TO, "b", {"weight": 3}),
+            Edge("b", EdgeType.IN_TOPIC, "c"),
+            Edge("a", EdgeType.IN_TOPIC, "c"),
+        ]
+    )
+
+    for direction in ("out", "in", "both"):
+        many = store.neighbors_many(["a", "b", "c"], direction=direction)
+        assert store.edges_many(["a", "b", "c"], direction=direction) == {
+            node_id: [edge for edge, _ in pairs] for node_id, pairs in many.items()
+        }
+    assert store.edges_many(["a"], [EdgeType.RELATED_TO]) == {
+        "a": [Edge("a", EdgeType.RELATED_TO, "b", {"weight": 3})]
+    }
+
+
+def test_nodes_are_counted_by_label_in_one_call(store: GraphStore) -> None:
+    store.upsert_conversation(_conversation())
+    store.upsert_nodes([Node("e", Label.ENTITY), Node("t", Label.TOPIC)])
+
+    counts = store.count_by_label()
+
+    assert counts == {label.value: store.count_nodes(label) for label in Label}
+    assert counts[Label.MESSAGE] == 2
+    assert counts[Label.FACT] == 0
+
+
+def test_conversations_can_be_upserted_together(store: GraphStore) -> None:
+    store.upsert_conversation(_conversation("conv_a", texts=("one", "two", "three")))
+    store.upsert_nodes([Node("chunk_a", Label.CHUNK, {"conversation_id": "conv_a"})])
+    store.upsert_edges([Edge("conv_a_m0", EdgeType.HAS_CHUNK, "chunk_a")])
+    first_b = _conversation("conv_b", SourceKind.CLAUDE, ("cat", "names"), "Cats")
+    latest_b = _conversation("conv_b", SourceKind.CLAUDE, ("cat", "biscuit"), "Cats")
+
+    store.upsert_conversations(
+        [_conversation("conv_a", texts=("one", "two changed")), first_b, latest_b]
+    )
+
+    assert store.get_conversation("conv_b") == latest_b
+    rebuilt = store.get_conversation("conv_a")
+    assert rebuilt is not None
+    assert [m.text for m in rebuilt.messages] == ["one", "two changed"]
+    assert store.count_nodes(Label.MESSAGE) == 4
+    assert store.get_node("chunk_a") is not None  # an unchanged message keeps its chunks
+    assert store.search_text("three") == []
+    store.upsert_conversations([])
+
+
+def test_embeddings_can_be_set_together(store: GraphStore) -> None:
+    store.upsert_nodes([Node("x", Label.CHUNK), Node("y", Label.CHUNK), Node("z", Label.ENTITY)])
+
+    store.set_embeddings({"x": [1.0, 0.0], "y": [0.0, 1.0], "z": [0.9, 0.1]})
+    store.set_embeddings({})
+
+    assert store.count_embeddings() == 3
+    assert [h.node_id for h in store.search_vector([1.0, 0.0], limit=2)] == ["x", "z"]
+    with pytest.raises(ValueError, match="dimensions"):
+        store.set_embeddings({"x": [1.0, 0.0, 0.0]})
+    with pytest.raises(KeyError):
+        store.set_embeddings({"x": [1.0, 0.0], "ghost": [0.0, 1.0]})
+    with pytest.raises(ValueError, match="empty"):
+        store.set_embeddings({"x": []})

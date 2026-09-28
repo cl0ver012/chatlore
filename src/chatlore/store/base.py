@@ -185,6 +185,22 @@ class GraphStore(ABC):
             for node_id in dict.fromkeys(node_ids)
         }
 
+    def edges_many(
+        self,
+        node_ids: Iterable[str],
+        edge_types: Sequence[str] | None = None,
+        direction: Direction = "out",
+    ) -> dict[str, list[Edge]]:
+        """The edges ``neighbors_many`` finds, without the nodes at their other ends.
+
+        For a caller that needs only the links, so a backend on a server need not
+        send every neighbour's props along.
+        """
+        return {
+            node_id: [edge for edge, _ in pairs]
+            for node_id, pairs in self.neighbors_many(node_ids, edge_types, direction).items()
+        }
+
     @abstractmethod
     def find_nodes(
         self, label: str, where: Mapping[str, Any] | None = None, limit: int = 1_000_000
@@ -195,6 +211,10 @@ class GraphStore(ABC):
     def count_nodes(self, label: str | None = None) -> int:
         """Return how many nodes exist, optionally of one label."""
 
+    def count_by_label(self) -> dict[str, int]:
+        """How many nodes of each ``Label`` exist, in one call."""
+        return {label.value: self.count_nodes(label) for label in Label}
+
     # -- conversations -------------------------------------------------------
 
     @abstractmethod
@@ -204,6 +224,11 @@ class GraphStore(ABC):
         Messages that are still present keep their chunks and embeddings. Messages
         that disappeared are deleted together with their chunks.
         """
+
+    def upsert_conversations(self, conversations: Iterable[Conversation]) -> None:
+        """``upsert_conversation`` for each, which a backend may do together."""
+        for conversation in conversations:
+            self.upsert_conversation(conversation)
 
     @abstractmethod
     def get_conversation(self, conversation_id: str) -> Conversation | None:
@@ -234,6 +259,11 @@ class GraphStore(ABC):
     @abstractmethod
     def set_embedding(self, node_id: str, embedding: Sequence[float]) -> None:
         """Attach an embedding to a node. All embeddings share one dimension."""
+
+    def set_embeddings(self, embeddings: Mapping[str, Sequence[float]]) -> None:
+        """``set_embedding`` for each node, which a backend may do together."""
+        for node_id, embedding in embeddings.items():
+            self.set_embedding(node_id, embedding)
 
     @abstractmethod
     def nodes_without_embedding(self, label: str, limit: int = 100) -> list[Node]:

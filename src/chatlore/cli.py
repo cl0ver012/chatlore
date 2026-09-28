@@ -58,6 +58,7 @@ from chatlore.pipeline import (
 )
 from chatlore.search import hybrid_search
 from chatlore.store import (
+    ConversationWriter,
     EdgeType,
     GraphStore,
     Label,
@@ -212,7 +213,12 @@ def import_(
     try:
         kind = detect_source(path) if source == "auto" else get_importer(source).kind
         importer = get_importer(kind.value)
-        with Library(default_home()) as library, _store(dry_run) as store, _writes(store):
+        with (
+            Library(default_home()) as library,
+            _store(dry_run) as store,
+            _writes(store),
+            _writer(store) as writer,
+        ):
             for conversation in importer.parse(path, issues.append):
                 messages += len(conversation.messages)
                 if dry_run:
@@ -220,8 +226,8 @@ def import_(
                     continue
                 outcome = library.add(conversation)
                 outcomes[outcome.value] += 1
-                if outcome is not AddOutcome.UNCHANGED and store is not None:
-                    store.upsert_conversation(conversation)
+                if outcome is not AddOutcome.UNCHANGED and writer is not None:
+                    writer.add(conversation)
     except ImporterError as error:
         console.print(f"[red]Import failed:[/red] {error}")
         raise typer.Exit(code=1) from error
@@ -364,9 +370,9 @@ def index(
     if rebuild:
         library.rebuild_index()
     with open_store(home) as store:
-        with store.transaction():
+        with store.transaction(), ConversationWriter(store) as writer:
             for conversation in library:
-                store.upsert_conversation(conversation)
+                writer.add(conversation)
                 count += 1
         total = store.count_nodes("Conversation")
     console.print(f"Indexed {count} conversations. Database holds {total}.")
@@ -996,6 +1002,16 @@ def _writes(store: GraphStore | None) -> Iterator[None]:
         return
     with store.transaction():
         yield
+
+
+@contextmanager
+def _writer(store: GraphStore | None) -> Iterator[ConversationWriter | None]:
+    """Batched conversation writes; nothing without a store."""
+    if store is None:
+        yield None
+        return
+    with ConversationWriter(store) as writer:
+        yield writer
 
 
 @contextmanager

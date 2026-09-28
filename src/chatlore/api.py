@@ -30,7 +30,7 @@ from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normali
 from chatlore.llm import LLMError, make_llm
 from chatlore.paths import default_home
 from chatlore.search import hybrid_search
-from chatlore.store import EdgeType, GraphStore, Label, Node, open_store
+from chatlore.store import Edge, EdgeType, GraphStore, Label, Node, open_store
 
 WEB = Path(__file__).parent / "web"
 """The web interface's files, served at /."""
@@ -121,13 +121,14 @@ def create_app(home: Path | None = None) -> FastAPI:
     @app.get("/stats")
     def stats() -> dict[str, int]:
         with store() as graph:
+            counts = graph.count_by_label()
             return {
-                "conversations": graph.count_nodes(Label.CONVERSATION),
-                "messages": graph.count_nodes(Label.MESSAGE),
-                "chunks": graph.count_nodes(Label.CHUNK),
+                "conversations": counts[Label.CONVERSATION],
+                "messages": counts[Label.MESSAGE],
+                "chunks": counts[Label.CHUNK],
                 "embeddings": graph.count_embeddings(),
-                "entities": graph.count_nodes(Label.ENTITY),
-                "topics": graph.count_nodes(Label.TOPIC),
+                "entities": counts[Label.ENTITY],
+                "topics": counts[Label.TOPIC],
             }
 
     @app.get("/search")
@@ -337,30 +338,42 @@ def create_app(home: Path | None = None) -> FastAPI:
                     for _, node in sorted(members, key=lambda pair: -int(pair[1].props["mentions"]))
                 }
                 chosen = dict(list(chosen.items())[:limit])
-            else:
+            links: dict[str, list[Edge]] | None = None
+            if not entity and not topic:
                 every = graph.find_nodes(Label.ENTITY)
-                related = graph.neighbors_many(
+                related = graph.edges_many(
                     (node.id for node in every), [EdgeType.RELATED_TO], "both"
                 )
                 linked = [node for node in every if related[node.id]]
                 linked.sort(key=lambda node: -int(node.props["mentions"]))
                 chosen = {node.id: node for node in linked[:limit]}
+                # The outgoing links are among the ones just fetched.
+                links = {
+                    node_id: [edge for edge in related[node_id] if edge.src == node_id]
+                    for node_id in chosen
+                }
 
-            nodes, edges, topics = [], [], {}
-            in_topics = graph.neighbors_many(chosen, [EdgeType.IN_TOPIC])
-            links = graph.neighbors_many(chosen, [EdgeType.RELATED_TO], "out")
+            nodes, edges, topic_of = [], [], {}
+            if links is None:
+                links = graph.edges_many(chosen, [EdgeType.RELATED_TO], "out")
+            for node_id, in_topic in graph.edges_many(chosen, [EdgeType.IN_TOPIC]).items():
+                if in_topic:
+                    topic_of[node_id] = in_topic[0].dst
+            topic_nodes = graph.get_nodes(dict.fromkeys(topic_of.values()))
+            topics = {
+                topic_id: topic_nodes[topic_id].props.get("title")
+                for topic_id in dict.fromkeys(topic_of.values())
+                if topic_id in topic_nodes
+            }
             for node in chosen.values():
-                in_topic = in_topics[node.id]
-                topic_node = in_topic[0][1] if in_topic else None
-                if topic_node is not None:
-                    topics[topic_node.id] = topic_node.props.get("title")
-                nodes.append({**_entity(node), "topic": topic_node.id if topic_node else None})
-                for edge, other in links[node.id]:
-                    if other.id in chosen:
+                topic_id = topic_of.get(node.id)
+                nodes.append({**_entity(node), "topic": topic_id if topic_id in topics else None})
+                for edge in links[node.id]:
+                    if edge.dst in chosen:
                         edges.append(
                             {
                                 "source": node.id,
-                                "target": other.id,
+                                "target": edge.dst,
                                 "weight": edge.props.get("weight", 1),
                                 "description": (edge.props.get("descriptions") or [None])[0],
                             }
