@@ -58,12 +58,13 @@ from chatlore.pipeline import (
 )
 from chatlore.search import hybrid_search
 from chatlore.store import (
-    DATABASE_NAME,
     EdgeType,
     GraphStore,
     Label,
     Node,
     TextHit,
+    describe_store,
+    drop_store,
     open_store,
 )
 
@@ -151,8 +152,16 @@ def doctor() -> None:
     table.add_row("python", f"{platform.python_version()} ({sys.executable})")
     table.add_row("platform", platform.platform())
     table.add_row("data dir", f"{display_path(home)} ({state})")
+    table.add_row("store", _describe_store(home))
     table.add_row("model", _describe_llm())
     console.print(table)
+
+
+def _describe_store(home: Path) -> str:
+    try:
+        return describe_store(home)
+    except ValueError as error:
+        return str(error)
 
 
 def _describe_llm() -> str:
@@ -349,8 +358,7 @@ def index(
     """Bring the search database in line with the library."""
     home = default_home()
     if rebuild:
-        for name in (DATABASE_NAME, f"{DATABASE_NAME}-wal", f"{DATABASE_NAME}-shm"):
-            (home / name).unlink(missing_ok=True)
+        drop_store(home)
     count = 0
     library = Library(home)
     if rebuild:

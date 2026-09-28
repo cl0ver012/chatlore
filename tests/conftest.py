@@ -2,12 +2,37 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def falkordb_graph(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """With ``CHATLORE_STORE=falkordb``, give each test a graph of its own.
+
+    That runs the whole suite against a FalkorDB server, as CI does.
+    """
+    if os.environ.get("CHATLORE_STORE") != "falkordb":
+        yield
+        return
+    from chatlore.store import FALKORDB_DEFAULT_URL, FALKORDB_URL_ENV
+    from chatlore.store.falkordb import FalkorDBStore
+
+    graph = f"test_{uuid.uuid4().hex}"
+    monkeypatch.setenv("CHATLORE_FALKORDB_GRAPH", graph)
+    yield
+    store = FalkorDBStore(os.environ.get(FALKORDB_URL_ENV) or FALKORDB_DEFAULT_URL, graph)
+    try:
+        store.drop()
+    finally:
+        store.close()
 
 
 @pytest.fixture
