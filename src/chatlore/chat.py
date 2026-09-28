@@ -170,11 +170,9 @@ def _chunks_of(
     the ones about the question help. Without it, its most recent chunks.
     """
     lists: list[list[str]] = []
+    mentions = store.neighbors_many((entity.id for entity in entities), [EdgeType.MENTIONS], "in")
     for entity in entities:
-        chunks = [
-            chunk
-            for _, chunk in store.neighbors(entity.id, [EdgeType.MENTIONS], "in", limit=1_000_000)
-        ]
+        chunks = [chunk for _, chunk in mentions[entity.id]]
         if nearness is not None:
             ordered_chunks = sorted(
                 (chunk.id for chunk in chunks if chunk.id in nearness), key=nearness.__getitem__
@@ -203,8 +201,9 @@ def _notes(store: GraphStore, entities: Sequence[Node]) -> list[Note]:
     ]
     counts: dict[str, int] = {}
     topics: dict[str, Node] = {}
+    in_topics = store.neighbors_many((node.id for node in entities), [EdgeType.IN_TOPIC])
     for node in entities:
-        for _, topic in store.neighbors(node.id, [EdgeType.IN_TOPIC]):
+        for _, topic in in_topics[node.id]:
             counts[topic.id] = counts.get(topic.id, 0) + 1
             topics[topic.id] = topic
     for topic_id in sorted(counts, key=lambda key: -counts[key])[:MAX_TOPICS]:
@@ -236,8 +235,9 @@ def retrieve(
     best = sorted(scores, key=lambda chunk_id: -scores[chunk_id])[:limit]
 
     sources: list[Source] = []
+    chunks = store.get_nodes(best)
     for chunk_id in best:
-        node = store.get_node(chunk_id)
+        node = chunks.get(chunk_id)
         if node is None:
             continue
         props = node.props

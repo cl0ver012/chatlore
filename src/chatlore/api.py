@@ -224,7 +224,8 @@ def create_app(home: Path | None = None) -> FastAPI:
         with store() as graph:
             if q:
                 hits = graph.search_text(q, limit=limit, labels=[Label.ENTITY])
-                nodes = [node for hit in hits if (node := graph.get_node(hit.node_id))]
+                found = graph.get_nodes(hit.node_id for hit in hits)
+                nodes = [found[hit.node_id] for hit in hits if hit.node_id in found]
             else:
                 nodes = sorted(
                     graph.find_nodes(Label.ENTITY), key=lambda node: -int(node.props["mentions"])
@@ -277,7 +278,8 @@ def create_app(home: Path | None = None) -> FastAPI:
         with store() as graph:
             if q:
                 hits = graph.search_text(q, limit=limit, labels=[Label.TOPIC])
-                nodes = [node for hit in hits if (node := graph.get_node(hit.node_id))]
+                found = graph.get_nodes(hit.node_id for hit in hits)
+                nodes = [found[hit.node_id] for hit in hits if hit.node_id in found]
             else:
                 nodes = sorted(
                     graph.find_nodes(Label.TOPIC), key=lambda node: -int(node.props["size"])
@@ -336,24 +338,24 @@ def create_app(home: Path | None = None) -> FastAPI:
                 }
                 chosen = dict(list(chosen.items())[:limit])
             else:
-                linked = [
-                    node
-                    for node in graph.find_nodes(Label.ENTITY)
-                    if graph.neighbors(node.id, [EdgeType.RELATED_TO], "both", limit=1)
-                ]
+                every = graph.find_nodes(Label.ENTITY)
+                related = graph.neighbors_many(
+                    (node.id for node in every), [EdgeType.RELATED_TO], "both"
+                )
+                linked = [node for node in every if related[node.id]]
                 linked.sort(key=lambda node: -int(node.props["mentions"]))
                 chosen = {node.id: node for node in linked[:limit]}
 
             nodes, edges, topics = [], [], {}
+            in_topics = graph.neighbors_many(chosen, [EdgeType.IN_TOPIC])
+            links = graph.neighbors_many(chosen, [EdgeType.RELATED_TO], "out")
             for node in chosen.values():
-                in_topic = graph.neighbors(node.id, [EdgeType.IN_TOPIC])
+                in_topic = in_topics[node.id]
                 topic_node = in_topic[0][1] if in_topic else None
                 if topic_node is not None:
                     topics[topic_node.id] = topic_node.props.get("title")
                 nodes.append({**_entity(node), "topic": topic_node.id if topic_node else None})
-                for edge, other in graph.neighbors(
-                    node.id, [EdgeType.RELATED_TO], "out", limit=1_000_000
-                ):
+                for edge, other in links[node.id]:
                     if other.id in chosen:
                         edges.append(
                             {

@@ -48,6 +48,8 @@ class EdgeType(StrEnum):
 
 Direction = Literal["out", "in", "both"]
 
+_ALL = 1_000_000_000
+
 
 @dataclass(frozen=True, slots=True)
 class Node:
@@ -153,6 +155,35 @@ class GraphStore(ABC):
         limit: int = 100,
     ) -> list[tuple[Edge, Node]]:
         """Return edges touching ``node_id`` with the node at the other end."""
+
+    def get_nodes(self, node_ids: Iterable[str]) -> dict[str, Node]:
+        """Return the nodes among ``node_ids`` that exist, by id.
+
+        One lookup per node here; a backend that pays for every round trip, such
+        as a database server, fetches them together.
+        """
+        found: dict[str, Node] = {}
+        for node_id in node_ids:
+            node = self.get_node(node_id)
+            if node is not None:
+                found[node_id] = node
+        return found
+
+    def neighbors_many(
+        self,
+        node_ids: Iterable[str],
+        edge_types: Sequence[str] | None = None,
+        direction: Direction = "out",
+    ) -> dict[str, list[tuple[Edge, Node]]]:
+        """``neighbors`` of each node, all of them and in the same order, by id.
+
+        One query per node here; a backend that pays for every round trip
+        fetches them together.
+        """
+        return {
+            node_id: self.neighbors(node_id, edge_types, direction, limit=_ALL)
+            for node_id in dict.fromkeys(node_ids)
+        }
 
     @abstractmethod
     def find_nodes(

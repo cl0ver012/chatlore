@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   work on it as on SQLite, and it passes the same contract tests. The client is an optional
   dependency: `pip install 'chatlore[falkordb]'`. Guide in `docs/falkordb.md`.
 - `chatlore doctor` shows which store is in use, and `chatlore index --rebuild` rebuilds either.
+- `GraphStore.get_nodes` and `GraphStore.neighbors_many` fetch many nodes, or the neighbours of
+  many nodes, at once. Search, the passages gathered for a question, the graph view, and entity
+  and topic lists use them, so a store on a server answers in a few queries instead of one per
+  item: a search went from 46 queries to 7.
 - CI runs the contract tests on both stores, and every test with FalkorDB as the store.
 
 ## [0.1.0] - 2026-09-24

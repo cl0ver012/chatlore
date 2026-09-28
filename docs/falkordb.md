@@ -72,10 +72,12 @@ changes made to it directly are lost on the next `chatlore index --rebuild`.
   matches can come back in a different order.
 - The server has to be running. Commands fail with a connection error when it
   is not.
-- Every page and command asks the server many small questions, so keep it
-  close: on the same machine or network. Against a FalkorDB Cloud server a
-  continent away, 0.16 seconds per query, loading the demo took a minute and a
-  half, a search 8 to 10 seconds, and the graph view almost two minutes.
+- Keep the server close: on the same machine or network. Reading pages fetch
+  what they need in a few queries, but each one waits for the network. Against
+  a free FalkorDB Cloud server a continent away, with 0.16 seconds per round
+  trip and about 20 KB per second, a search took about a second, loading the
+  demo a minute and a half, and the graph view, which downloads about 500 KB,
+  20 seconds.
 - Each conversation takes a few round trips to the server, so importing is
   slower. On a made-up library of 12,000 notes, importing took 31 seconds
   against 8 with SQLite, chunking 26 seconds against 145, and a search the same

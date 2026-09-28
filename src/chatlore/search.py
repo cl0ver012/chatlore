@@ -73,10 +73,12 @@ def hybrid_search(
     wanted = set(sources or [])
     seen: set[str] = set()
     # Source filtering happens after the nearest-neighbour query, so ask for extra.
-    for vector_hit in store.search_vector(
+    vector_hits = store.search_vector(
         embedding, limit=candidates * (4 if wanted else 1), labels=[Label.CHUNK]
-    ):
-        node = store.get_node(vector_hit.node_id)
+    )
+    chunk_nodes = store.get_nodes(hit.node_id for hit in vector_hits)
+    for vector_hit in vector_hits:
+        node = chunk_nodes.get(vector_hit.node_id)
         if node is None or (wanted and node.props.get("source") not in wanted):
             continue
         message_id = str(node.props.get("message_id") or node.id)
@@ -112,8 +114,10 @@ def hybrid_search(
             break
 
     mentioned: set[str] = set()
-    for entity_hit in store.search_text(query, limit=limit, labels=[Label.ENTITY]):
-        chunks = store.neighbors(entity_hit.node_id, [EdgeType.MENTIONS], "in", limit=candidates)
+    entity_hits = store.search_text(query, limit=limit, labels=[Label.ENTITY])
+    mentions = store.neighbors_many((hit.node_id for hit in entity_hits), [EdgeType.MENTIONS], "in")
+    for entity_hit in entity_hits:
+        chunks = mentions[entity_hit.node_id][:candidates]
         for _, chunk in sorted(chunks, key=lambda pair: pair[1].id):
             if wanted and chunk.props.get("source") not in wanted:
                 continue

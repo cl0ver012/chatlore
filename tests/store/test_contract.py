@@ -269,3 +269,38 @@ def test_meta_round_trips(store: GraphStore) -> None:
     store.set_meta("embedding_model", "model-a")
     store.set_meta("embedding_model", "model-b")
     assert store.get_meta("embedding_model") == "model-b"
+
+
+def test_nodes_and_neighbors_can_be_fetched_many_at_once(store: GraphStore) -> None:
+    store.upsert_nodes(
+        [
+            Node("a", Label.ENTITY),
+            Node("b", Label.ENTITY),
+            Node("c", Label.TOPIC),
+            Node("d", Label.ENTITY),
+        ]
+    )
+    store.upsert_edges(
+        [
+            Edge("a", EdgeType.RELATED_TO, "b", {"weight": 2}),
+            Edge("b", EdgeType.RELATED_TO, "d"),
+            Edge("a", EdgeType.IN_TOPIC, "c"),
+            Edge("d", EdgeType.IN_TOPIC, "c"),
+        ]
+    )
+
+    nodes = store.get_nodes(["d", "missing", "a", "a"])
+    many = store.neighbors_many(["b", "a", "ghost"], [EdgeType.RELATED_TO], "both")
+
+    assert nodes == {"d": Node("d", Label.ENTITY), "a": Node("a", Label.ENTITY)}
+    assert store.get_nodes([]) == {}
+    assert many == {
+        "b": store.neighbors("b", [EdgeType.RELATED_TO], "both"),
+        "a": store.neighbors("a", [EdgeType.RELATED_TO], "both"),
+        "ghost": [],
+    }
+    assert [n.id for _, n in many["b"]] == ["a", "d"]
+    assert store.neighbors_many(["c"], direction="in") == {
+        "c": store.neighbors("c", direction="in")
+    }
+    assert store.neighbors_many([]) == {}

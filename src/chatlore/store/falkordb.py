@@ -59,6 +59,7 @@ _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SNIPPET_TOKENS = 16
 _UNSEARCHABLE = frozenset({"text"})
 _DIMENSION = "embedding_dimension"
+_ALL = 1_000_000_000
 
 # One client per server for the whole process. Connecting takes several round
 # trips, seconds to a server far away, and the web interface and MCP server open
@@ -164,6 +165,16 @@ class FalkorDBStore(GraphStore):
         )
         return _node(rows[0]) if rows else None
 
+    def get_nodes(self, node_ids: Iterable[str]) -> dict[str, Node]:
+        found: dict[str, Node] = {}
+        for page in _pages(list(dict.fromkeys(node_ids))):
+            rows = self._query(
+                "MATCH (n:Node) WHERE n._id IN $ids RETURN n._id, n._label, n._props",
+                {"ids": page},
+            )
+            found.update((row[0], _node(row)) for row in rows)
+        return found
+
     def delete_nodes(self, node_ids: Iterable[str]) -> None:
         for page in _pages(list(node_ids)):
             # Edges and index entries go with the node.
@@ -176,21 +187,33 @@ class FalkorDBStore(GraphStore):
         direction: Direction = "out",
         limit: int = 100,
     ) -> list[tuple[Edge, Node]]:
-        types = ":" + "|".join(_name(edge_type) for edge_type in edge_types) if edge_types else ""
-        pattern = {
-            "out": f"(a)-[r{types}]->(b:Node)",
-            "in": f"(a)<-[r{types}]-(b:Node)",
-            "both": f"(a)-[r{types}]-(b:Node)",
-        }[direction]
         rows = self._paged(
-            f"MATCH (a:Node {{_id: $id}}) MATCH {pattern} "
-            "RETURN type(r), startNode(r)._id, endNode(r)._id, r._props, "
-            "b._id, b._label, b._props "
-            "ORDER BY type(r), endNode(r)._id, startNode(r)._id",
+            f"MATCH (a:Node {{_id: $id}}) MATCH {_pattern(edge_types, direction)} "
+            f"RETURN {_NEIGHBOR} ORDER BY type(r), endNode(r)._id, startNode(r)._id",
             {"id": node_id},
             limit,
         )
-        return [(Edge(row[1], row[0], row[2], _loads(row[3])), _node(row[4:7])) for row in rows]
+        return [_neighbor(row) for row in rows]
+
+    def neighbors_many(
+        self,
+        node_ids: Iterable[str],
+        edge_types: Sequence[str] | None = None,
+        direction: Direction = "out",
+    ) -> dict[str, list[tuple[Edge, Node]]]:
+        wanted = list(dict.fromkeys(node_ids))
+        found: dict[str, list[tuple[Edge, Node]]] = {node_id: [] for node_id in wanted}
+        for page in _pages(wanted):
+            rows = self._paged(
+                f"MATCH (a:Node) WHERE a._id IN $ids MATCH {_pattern(edge_types, direction)} "
+                f"RETURN a._id, {_NEIGHBOR} "
+                "ORDER BY a._id, type(r), endNode(r)._id, startNode(r)._id",
+                {"ids": page},
+                _ALL,
+            )
+            for row in rows:
+                found[row[0]].append(_neighbor(row[1:]))
+        return found
 
     def find_nodes(
         self, label: str, where: Mapping[str, Any] | None = None, limit: int = 1_000_000
@@ -512,6 +535,24 @@ def _node_row(node: Node) -> dict[str, Any]:
 
 def _node(row: Sequence[Any]) -> Node:
     return Node(row[0], row[1], _loads(row[2]))
+
+
+_NEIGHBOR = "type(r), startNode(r)._id, endNode(r)._id, r._props, b._id, b._label, b._props"
+"""What a neighbour query returns: the edge, then the node at its other end."""
+
+
+def _neighbor(row: Sequence[Any]) -> tuple[Edge, Node]:
+    return Edge(row[1], row[0], row[2], _loads(row[3])), _node(row[4:7])
+
+
+def _pattern(edge_types: Sequence[str] | None, direction: Direction) -> str:
+    """The pattern from node ``a`` over ``r`` to its neighbour ``b``."""
+    types = ":" + "|".join(_name(edge_type) for edge_type in edge_types) if edge_types else ""
+    return {
+        "out": f"(a)-[r{types}]->(b:Node)",
+        "in": f"(a)<-[r{types}]-(b:Node)",
+        "both": f"(a)-[r{types}]-(b:Node)",
+    }[direction]
 
 
 def _name(value: str) -> str:
