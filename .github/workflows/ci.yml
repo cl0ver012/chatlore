@@ -68,3 +68,34 @@ jobs:
           uvx --from "$wheel" chatlore --version
           uvx --from "$wheel" chatlore demo --no-serve
           uvx --from "$wheel" chatlore --home ~/.chatlore-demo search "litestream"
+
+  falkordb:
+    name: FalkorDB backend
+    runs-on: ubuntu-latest
+    services:
+      falkordb:
+        image: falkordb/falkordb:v4.20.7
+        ports: ["6379:6379"]
+    env:
+      CHATLORE_FALKORDB_URL: redis://localhost:6379
+      CHATLORE_TEST_FALKORDB_URL: redis://localhost:6379
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --extra falkordb
+
+      - name: Contract tests on both stores
+        run: uv run pytest tests/store
+
+      - name: Every test with FalkorDB as the store
+        run: uv run pytest
+        env:
+          CHATLORE_STORE: falkordb
