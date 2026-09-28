@@ -13,8 +13,8 @@ By default ChatLore keeps its graph in a SQLite file in the library folder,
 which needs nothing else. [FalkorDB](https://www.falkordb.com) is a graph
 database that runs as a server. Use it when you want to query the graph with
 Cypher, look at it with FalkorDB's browser, or share one graph between several
-machines on a network. Every command, the web interface, and the MCP server work the same
-on both.
+machines on a network. Every command, the web interface, and the MCP server
+work the same on both.
 
 ## Settings
 
