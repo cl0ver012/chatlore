@@ -13,7 +13,7 @@ By default ChatLore keeps its graph in a SQLite file in the library folder,
 which needs nothing else. [FalkorDB](https://www.falkordb.com) is a graph
 database that runs as a server. Use it when you want to query the graph with
 Cypher, look at it with FalkorDB's browser, or share one graph between several
-machines. Every command, the web interface, and the MCP server work the same
+machines on a network. Every command, the web interface, and the MCP server work the same
 on both.
 
 ## Settings
@@ -72,6 +72,10 @@ changes made to it directly are lost on the next `chatlore index --rebuild`.
   matches can come back in a different order.
 - The server has to be running. Commands fail with a connection error when it
   is not.
+- Every page and command asks the server many small questions, so keep it
+  close: on the same machine or network. Against a FalkorDB Cloud server a
+  continent away, 0.16 seconds per query, loading the demo took a minute and a
+  half, a search 8 to 10 seconds, and the graph view almost two minutes.
 - Each conversation takes a few round trips to the server, so importing is
   slower. On a made-up library of 12,000 notes, importing took 31 seconds
   against 8 with SQLite, chunking 26 seconds against 145, and a search the same

@@ -26,6 +26,7 @@ that span queries, so ``transaction`` only groups calls for the reader.
 
 from __future__ import annotations
 
+import atexit
 import json
 import re
 import threading
@@ -59,9 +60,30 @@ _SNIPPET_TOKENS = 16
 _UNSEARCHABLE = frozenset({"text"})
 _DIMENSION = "embedding_dimension"
 
-# Indexes are created once per server and graph in each process.
+# One client per server for the whole process. Connecting takes several round
+# trips, seconds to a server far away, and the web interface and MCP server open
+# the store for every request. Indexes are created once per server and graph.
+_clients: dict[str, FalkorDB] = {}
 _prepared: set[tuple[str, str]] = set()
-_preparing = threading.Lock()
+_lock = threading.Lock()
+
+
+def _client(url: str) -> FalkorDB:
+    with _lock:
+        if url not in _clients:
+            # Networks drop connections that sit idle, so one unused for half a
+            # minute is checked before it is used again.
+            _clients[url] = FalkorDB.from_url(url, health_check_interval=30, socket_keepalive=True)
+        return _clients[url]
+
+
+@atexit.register
+def _disconnect() -> None:
+    """Close every client's sockets; a client made from a URL does not close them itself."""
+    with _lock:
+        for client in _clients.values():
+            client.connection.connection_pool.disconnect()
+        _clients.clear()
 
 
 class FalkorDBStore(GraphStore):
@@ -70,9 +92,9 @@ class FalkorDBStore(GraphStore):
     def __init__(self, url: str, graph: str) -> None:
         self.url = url
         self.name = graph
-        self._db = FalkorDB.from_url(url)
+        self._db = _client(url)
         self._graph = self._db.select_graph(graph)
-        with _preparing:
+        with _lock:
             if (url, graph) not in _prepared:
                 self._create_indexes()
                 _prepared.add((url, graph))
@@ -80,10 +102,7 @@ class FalkorDBStore(GraphStore):
         self._dimension = int(dimension) if dimension is not None else None
 
     def close(self) -> None:
-        self._db.close()
-        # A client made from a URL does not own its connection pool, so closing it
-        # leaves the sockets open; they are closed here.
-        self._db.connection.connection_pool.disconnect()
+        """Nothing to release: the connection stays open for the next store on this server."""
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

@@ -82,6 +82,18 @@ def test_falkordb_is_chosen_by_setting(tmp_path: Path, monkeypatch: pytest.Monke
     assert not (tmp_path / DATABASE_NAME).exists()
 
 
+def test_the_password_is_not_shown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHATLORE_STORE", "falkordb")
+    monkeypatch.setenv("CHATLORE_FALKORDB_URL", "redis://me:p%40ss@db.example:6380")
+    monkeypatch.setenv("CHATLORE_FALKORDB_GRAPH", "mine")
+
+    shown = describe_store(tmp_path)
+
+    assert shown == "FalkorDB graph 'mine' at redis://me:***@db.example:6380"
+    monkeypatch.setenv("CHATLORE_FALKORDB_URL", "redis://:secret@db.example")
+    assert describe_store(tmp_path).endswith("at redis://:***@db.example")
+
+
 def test_an_unknown_store_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHATLORE_STORE", "neo4j")
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
 from chatlore.store.base import (
     ConversationSummary,
@@ -82,8 +83,18 @@ def describe_store(home: Path) -> str:
     """Where the library's graph is kept, for people to read."""
     if _backend() == "falkordb":
         url, graph = _falkordb_settings()
-        return f"FalkorDB graph '{graph}' at {url}"
+        return f"FalkorDB graph '{graph}' at {_without_password(url)}"
     return f"SQLite at {home / DATABASE_NAME}"
+
+
+def _without_password(url: str) -> str:
+    """The URL with any password replaced, so it can be shown."""
+    parts = urlsplit(url)
+    if parts.password is None:
+        return url
+    user = f"{parts.username}:" if parts.username else ":"
+    host = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit(parts._replace(netloc=f"{user}***@{host}"))
 
 
 def _backend() -> str:
