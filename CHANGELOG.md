@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A FalkorDB store, chosen with `CHATLORE_STORE=falkordb`, with `CHATLORE_FALKORDB_URL` and
+  `CHATLORE_FALKORDB_GRAPH` saying where. Every command, the web interface, and the MCP server
+  work on it as on SQLite, and it passes the same contract tests. The client is an optional
+  dependency: `pip install 'chatlore[falkordb]'`. Guide in `docs/falkordb.md`.
+- `chatlore doctor` shows which store is in use, and `chatlore index --rebuild` rebuilds either.
+- CI runs the contract tests on both stores, and every test with FalkorDB as the store.
+
 ## [0.1.0] - 2026-09-24
 
 ### Added
