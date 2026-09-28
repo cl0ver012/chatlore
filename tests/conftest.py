@@ -26,9 +26,11 @@ def falkordb_graph(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     from chatlore.store.falkordb import FalkorDBStore
 
     graph = f"test_{uuid.uuid4().hex}"
+    # Read now: a test may point the setting elsewhere, and it is still set here after.
+    url = os.environ.get(FALKORDB_URL_ENV) or FALKORDB_DEFAULT_URL
     monkeypatch.setenv("CHATLORE_FALKORDB_GRAPH", graph)
     yield
-    store = FalkorDBStore(os.environ.get(FALKORDB_URL_ENV) or FALKORDB_DEFAULT_URL, graph)
+    store = FalkorDBStore(url, graph)
     try:
         store.drop()
     finally:

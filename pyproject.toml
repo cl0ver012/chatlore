@@ -108,7 +108,7 @@ pretty = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec", "fastembed", "networkx", "falkordb", "falkordb.*"]
+module = ["sqlite_vec", "fastembed", "networkx", "falkordb", "falkordb.*", "redis", "redis.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
