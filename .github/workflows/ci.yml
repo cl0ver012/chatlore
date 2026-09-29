@@ -92,6 +92,23 @@ jobs:
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"litestream"}}}' \
             | grep -q 'Moving Tidewater from Postgres to SQLite'
 
+      - name: Upload an export as a visitor, then download and delete it
+        run: |
+          curl -fs -c visitor.txt http://127.0.0.1:7860/library/import \
+            -H 'X-ChatLore: 1' -H 'X-Filename: conversations.json' \
+            --data-binary @tests/fixtures/claude/conversations.json
+          for attempt in $(seq 60); do
+            curl -fs -b visitor.txt http://127.0.0.1:7860/library | grep -q '"running":false' && break
+            sleep 2
+          done
+          curl -fs -b visitor.txt http://127.0.0.1:7860/library | grep -q '"stage":"done"'
+          curl -fs -b visitor.txt http://127.0.0.1:7860/stats | grep -q '"conversations":3,'
+          curl -fs http://127.0.0.1:7860/stats | grep -q '"conversations":32,'
+          curl -fs -b visitor.txt -o library.zip http://127.0.0.1:7860/library/export
+          unzip -l library.zip | grep -q manifest.json
+          curl -fs -b visitor.txt -X DELETE -H 'X-ChatLore: 1' http://127.0.0.1:7860/library
+          curl -fs -b visitor.txt http://127.0.0.1:7860/library | grep -q '"own":false'
+
       - name: Show the server's output
         if: always()
         run: docker logs demo || true
