@@ -43,6 +43,10 @@
           <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="15" cy="18" r="2.5"/><path d="M8.3 7.9l4.9 8.4M8.5 6.8l7-.6M17.4 8.4l-1.6 7.2"/></svg>
           Graph
         </button>
+        <button type="button" id="data-open" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>
+          Your data
+        </button>
       </nav>
 
       <div class="library">
@@ -180,6 +184,41 @@
       </button>
     </header>
     <div id="topic-body" class="sheet-body"></div>
+  </dialog>
+
+  <dialog id="data" class="sheet">
+    <header class="sheet-head">
+      <div>
+        <h2>Your data</h2>
+        <p id="data-meta" class="muted"></p>
+      </div>
+      <button type="button" class="icon-button" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+    <div class="sheet-body">
+      <label id="data-drop" class="dropzone">
+        <input id="data-file" type="file" accept=".zip,.json,.md,.markdown,.txt">
+        <svg viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>
+        <strong>Drop an export here, or choose a file</strong>
+        <span>ChatGPT or Claude export (.zip), Gemini Takeout (.zip or MyActivity.json),
+          Markdown notes (.zip or .md), or a ChatLore archive. Up to <span id="data-max">200</span> MB.</span>
+      </label>
+      <p id="data-privacy" class="data-note" hidden></p>
+      <div id="data-progress" class="data-progress" hidden>
+        <div class="data-stage"><span id="data-stage"></span><span id="data-count" class="muted"></span></div>
+        <progress id="data-bar" max="1" value="0"></progress>
+        <p id="data-summary" class="muted"></p>
+        <ul id="data-notes"></ul>
+      </div>
+      <h4>Download</h4>
+      <p class="muted data-help">Everything in this library, to import into ChatLore anywhere, or as Markdown files to read.</p>
+      <div class="sheet-actions">
+        <a class="button" href="library/export?format=archive" download>ChatLore archive</a>
+        <a class="button" href="library/export?format=markdown" download>Markdown</a>
+        <button type="button" id="data-delete" class="danger" hidden>Delete my library</button>
+      </div>
+    </div>
   </dialog>
 
   <script src="app.js"></script>

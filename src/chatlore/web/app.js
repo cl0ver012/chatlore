@@ -115,7 +115,7 @@ function show(view) {
   if (view === "ask") $("#ask-input").focus();
 }
 
-document.querySelectorAll("nav button").forEach((button) => button.addEventListener("click", () => show(button.dataset.view)));
+document.querySelectorAll("nav button[data-view]").forEach((button) => button.addEventListener("click", () => show(button.dataset.view)));
 document.querySelectorAll("dialog [data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 document.querySelectorAll("dialog").forEach((dialog) =>
   dialog.addEventListener("click", (event) => event.target === dialog && dialog.close()),
@@ -128,14 +128,176 @@ api("/stats")
   })
   .catch(() => {});
 
-// A public server, such as the hosted demo, says so.
-api("/health")
-  .then((health) => {
-    if (!health.public) return;
-    $("#ask-hero p").textContent = "A demo on made-up conversations. Every answer cites the chats it came from.";
-    $("#demo-note").hidden = false;
+// A public server, such as the hosted demo, says so, unless the visitor brought their own library.
+api("/library")
+  .then((library) => {
+    Data.info = library;
+    Data.render();
+    if (library.import?.running) Data.poll();
+    if (!library.public) return;
+    if (library.own) {
+      $("#ask-hero p").textContent = "Your own conversations, kept on this server only for you. Every answer cites its sources.";
+    } else {
+      $("#ask-hero p").textContent = "A demo on made-up conversations. Every answer cites the chats it came from.";
+      $("#demo-note").hidden = false;
+    }
   })
   .catch(() => {});
+
+// -- your data -------------------------------------------------------------------------
+
+const STAGES = {
+  waiting: "Waiting to start",
+  importing: "Importing conversations",
+  embedding: "Preparing search",
+  reading: "Reading with the language model",
+  summarising: "Summarising entities",
+  linking: "Linking names for the same thing",
+  topics: "Writing topic reports",
+  done: "Done",
+  failed: "The import failed",
+  cancelled: "Stopped",
+};
+
+const Data = {
+  info: null,
+  timer: null,
+
+  hoursLeft() {
+    const left = (new Date(this.info.expires_at) - Date.now()) / 3_600_000;
+    return left < 1 ? "in less than an hour" : `in about ${Math.round(left)} hours`;
+  },
+
+  render() {
+    const info = this.info;
+    if (!info) return;
+    $("#data-open").hidden = false;
+    $("#data-max").textContent = number(info.max_upload_mb);
+    $("#data-drop").hidden = !info.uploads;
+    $("#data-delete").hidden = !(info.public && info.own);
+    const privacy = $("#data-privacy");
+    if (info.public && info.uploads) {
+      privacy.hidden = false;
+      privacy.textContent =
+        `Your upload goes to this server only, into a library nobody else can see, tied to this browser. ` +
+        `It is deleted after ${info.keep_hours} hours, or now with Delete. Building the knowledge graph ` +
+        `sends your conversations to the language model this server uses.`;
+    }
+    $("#data-meta").textContent = !info.public
+      ? "Import exports into this library, or download it."
+      : info.own
+        ? `Your private library on this server, deleted ${this.hoursLeft()}.`
+        : info.uploads
+          ? "Try ChatLore on your own conversations."
+          : "Download the demo library.";
+    const status = info.import;
+    $("#data-progress").hidden = !status;
+    if (status) this.show(status);
+  },
+
+  show(status, uploaded) {
+    $("#data-drop").classList.toggle("busy", Boolean(status.running));
+    $("#data-stage").textContent = uploaded === undefined ? STAGES[status.stage] || status.stage : "Uploading";
+    const bar = $("#data-bar");
+    if (uploaded !== undefined) {
+      bar.value = uploaded;
+      $("#data-count").textContent = `${Math.round(uploaded * 100)}%`;
+    } else if (status.total > 0 && status.running) {
+      bar.value = Math.min(1, status.done / status.total);
+      $("#data-count").textContent = `${number(status.done)} of ${number(status.total)}`;
+    } else {
+      bar.value = status.running ? 0 : 1;
+      bar.toggleAttribute("value", !status.running || status.total > 0);
+      $("#data-count").textContent = "";
+    }
+    const summary = [];
+    if (status.file) summary.push(status.file);
+    if (status.conversations) summary.push(`${number(status.conversations)} conversations added`);
+    if (status.skipped) summary.push(`${number(status.skipped)} records skipped`);
+    $("#data-summary").innerHTML = esc(summary.join(" · ")) + (status.error ? `<br><span class="error">${esc(status.error)}</span>` : "");
+    const notes = [...(status.notes || [])];
+    $("#data-notes").innerHTML = notes.map((note) => `<li>${esc(note)}</li>`).join("");
+    if (status.stage === "done" && !status.running) {
+      $("#data-notes").insertAdjacentHTML("beforeend", '<li><button type="button" class="primary" id="data-show">Show the library</button></li>');
+      $("#data-show").addEventListener("click", () => location.reload());
+    }
+  },
+
+  async refresh() {
+    this.info = await api("/library");
+    this.render();
+  },
+
+  poll() {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(async () => {
+      try {
+        await this.refresh();
+      } catch {
+        // try again on the next tick
+      }
+      if (this.info?.import?.running) this.poll();
+    }, 1500);
+  },
+
+  upload(file) {
+    if (!file) return;
+    if (file.size > this.info.max_upload_mb * 1_000_000) {
+      $("#data-progress").hidden = false;
+      this.show({ file: file.name, stage: "failed", running: false, error: `The file is larger than ${this.info.max_upload_mb} MB.` });
+      return;
+    }
+    $("#data-progress").hidden = false;
+    const request = new XMLHttpRequest();
+    request.open("POST", "library/import");
+    request.setRequestHeader("X-ChatLore", "1");
+    request.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) this.show({ file: file.name, running: true }, event.loaded / event.total);
+    };
+    request.onload = () => {
+      let body = {};
+      try {
+        body = JSON.parse(request.responseText);
+      } catch {
+        // an empty or plain-text answer
+      }
+      if (request.status === 202) {
+        this.show(body);
+        this.poll();
+      } else {
+        this.show({ file: file.name, stage: "failed", running: false, error: body.detail || `The server answered ${request.status}.` });
+      }
+    };
+    request.onerror = () => this.show({ file: file.name, stage: "failed", running: false, error: "The upload did not reach the server." });
+    request.send(file);
+  },
+
+  async remove() {
+    if (!confirm("Delete your library from this server now? This cannot be undone.")) return;
+    const response = await fetch("library", { method: "DELETE", headers: { "X-ChatLore": "1" } });
+    if (response.ok) location.reload();
+  },
+};
+
+$("#data-open").addEventListener("click", () => {
+  Data.refresh().catch(() => {});
+  $("#data").showModal();
+});
+$("#data-file").addEventListener("change", (event) => Data.upload(event.target.files[0]));
+$("#data-delete").addEventListener("click", () => Data.remove());
+const drop = $("#data-drop");
+drop.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  drop.classList.add("over");
+});
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("over");
+  Data.upload(event.dataTransfer.files[0]);
+});
 
 // -- conversations ---------------------------------------------------------------------
 
@@ -193,7 +355,7 @@ const Conversations = {
               <span class="row-meta">${esc(date(c.updated_at || c.created_at))}</span></button>`,
           )
           .join("")
-      : `<p class="empty">${this.all.length ? "No conversation title matches." : "Nothing imported yet. Run chatlore import."}</p>`;
+      : `<p class="empty">${this.all.length ? "No conversation title matches." : "Nothing imported yet. Import an export under Your data."}</p>`;
   },
 };
 
