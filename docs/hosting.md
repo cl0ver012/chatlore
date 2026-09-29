@@ -56,8 +56,44 @@ front of a hosting service:
   through a visitor's browser.
 - The web interface says it is a demo, and `/health` reports `"public": true`.
 
-The library is only ever read. Never serve your own library this way: anyone
-who finds the address can read every conversation in it.
+The server's library is only ever read. Never serve your own library this way:
+anyone who finds the address can read every conversation in it.
+
+## Visitors' own data
+
+The image also runs with `--uploads`, which lets visitors try ChatLore on their
+own conversations:
+
+```bash
+chatlore --home ~/.chatlore-demo serve --public --uploads --host 0.0.0.0 --port 7860
+```
+
+- A visitor who uploads an export under **Your data** gets a library of their
+  own, and everything they then see, search, and ask is theirs alone. Everyone
+  else still sees the server's library.
+- The library is tied to the visitor's browser by a random token in a cookie
+  (HttpOnly, SameSite=Lax, and Secure over HTTPS). Its folder is named after a
+  hash of the token, so the server's files do not give the token away.
+- It is deleted after 24 hours, or `--keep-hours`, and at once when the visitor
+  chooses **Delete my library**; an import still running is stopped first. The
+  server looks for expired libraries every ten minutes. They are kept in
+  `~/.chatlore-spaces`, or `--spaces-dir`, each with its graph in its own SQLite
+  file, even when the server's library is on FalkorDB.
+- Uploads are imported one at a time, so the server keeps answering while one
+  runs, and each visitor has one import at a time. An upload may be up to
+  200 MB, or `--max-upload-mb`; a zip may unpack to at most 2 GB of text.
+- Every change (an upload, a deletion) must carry the header the web interface
+  sends, `X-ChatLore: 1`, so another website cannot make a visitor's browser
+  upload or delete.
+- Building the knowledge graph from an upload reads all of it with the
+  language model on the server's key, as `chatlore extract` does locally, so a
+  large export costs as much as extracting it at home. `--extract-limit` caps
+  how many passages of each upload the model reads; the rest stays searchable.
+  The dialog tells visitors that their conversations go to that model.
+- Visitors download their library as a ChatLore archive or as Markdown.
+
+Assistants connected over `/mcp` see the server's library, since they carry no
+visitor's cookie.
 
 ## Where to host it
 
@@ -65,7 +101,9 @@ Any service that builds and runs a Dockerfile from a Git repository works, and
 gives the container an HTTPS address. ChatGPT only connects to HTTPS.
 
 CI builds the image on every pull request, starts it, and checks the web
-interface, the API, and a tool call over MCP.
+interface, the API, and a tool call over MCP. It then uploads an export as a
+visitor, waits for the import, checks that only that visitor sees it, downloads
+it, and deletes it.
 
 ## Connecting assistants to it
 

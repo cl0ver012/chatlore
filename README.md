@@ -50,6 +50,9 @@ chatlore stats
 ```
 
 The library is kept in `~/.chatlore`; `--home <folder>` or `CHATLORE_HOME` picks another.
+The web interface can do the same without the terminal: after `chatlore serve`,
+**Your data** uploads an export, builds everything from it, and downloads the
+library again.
 
 The source is detected from the file. Importing is idempotent, so re-running it
 after a fresh export only adds what changed. How to get each export, what is
@@ -98,6 +101,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M8 | Easy to try: PyPI package, demo library, export and import | done, v0.1.0 |
 | M9 | Hosted demo | public mode, MCP over HTTP, and Docker image done; deployment next |
 | M10 | FalkorDB backend | done |
+| M11 | Your own data in the web interface: upload, export, private visitor libraries | done |
 
 ## Development setup
 
