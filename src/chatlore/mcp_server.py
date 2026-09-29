@@ -224,7 +224,8 @@ def create_server(home: Path | None = None) -> MCPServer:
         with open_store(library) as graph:
             if words:
                 hits = graph.search_text(words, limit=limit, labels=[Label.TOPIC])
-                nodes = [node for hit in hits if (node := graph.get_node(hit.node_id))]
+                found = graph.get_nodes(hit.node_id for hit in hits)
+                nodes = [found[hit.node_id] for hit in hits if hit.node_id in found]
             else:
                 nodes = sorted(
                     graph.find_nodes(Label.TOPIC), key=lambda node: -int(node.props["size"])
@@ -318,7 +319,8 @@ def _find_entity(graph: GraphStore, name: str) -> Node | None:
         return node
     exact = entity_key(name)
     hits = graph.search_text(name, limit=20, labels=[Label.ENTITY])
-    nodes = [node for hit in hits if (node := graph.get_node(hit.node_id)) is not None]
+    found = graph.get_nodes(hit.node_id for hit in hits)
+    nodes = [found[hit.node_id] for hit in hits if hit.node_id in found]
     for node in nodes:
         if entity_key(str(node.props["name"])) == exact:
             return node

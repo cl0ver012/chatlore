@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from chatlore.api import create_app
 from chatlore.cli import app as cli
+from chatlore.store import drop_store
 from tests.fakes import FakeEmbedder, FakeLLM
 
 runner = CliRunner()
@@ -134,10 +135,9 @@ def test_chat_with_nothing_to_go_on_does_not_call_the_model(
     client: TestClient, llm: FakeLLM, home: Path
 ) -> None:
     asked = len(llm.chat_requests)
-    empty = home.parent / "empty"
+    drop_store(home)
 
-    with TestClient(create_app(empty)) as fresh:
-        events = _events(fresh.post("/chat", json={"question": "Anything?"}).text)
+    events = _events(client.post("/chat", json={"question": "Anything?"}).text)
 
     assert events == [("sources", []), ("done", {"cited": [], "found": False})]
     assert len(llm.chat_requests) == asked

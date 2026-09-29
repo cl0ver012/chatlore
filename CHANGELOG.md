@@ -9,16 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `chatlore serve --public` for hosting a demo behind a proxy: questions sent to the model are
-  limited for each visitor per hour and for everyone per day (`--questions-per-hour`,
-  `--questions-per-day`), visitors are told apart by the proxy's forwarded address, and the web
-  interface says it is a demo. `/health` reports whether a server is public.
-- `chatlore serve` also serves the MCP server at `/mcp` over streamable HTTP, for assistants
-  that connect to a URL, such as ChatGPT. A private server only answers MCP requests addressed
-  to this machine.
-- A `Dockerfile` for the hosted demo, with the demo library and embedding model built in. CI
-  builds it, starts it, and checks the web interface, the API, and a tool call over MCP. Guide
-  in `docs/hosting.md`.
+- A FalkorDB store, chosen with `CHATLORE_STORE=falkordb`, with `CHATLORE_FALKORDB_URL` and
+  `CHATLORE_FALKORDB_GRAPH` saying where. Every command, the web interface, and the MCP server
+  work on it as on SQLite, and it passes the same contract tests. The client is an optional
+  dependency: `pip install 'chatlore[falkordb]'`. Guide in `docs/falkordb.md`.
+- `chatlore doctor` shows which store is in use, and `chatlore index --rebuild` rebuilds either.
+- Batch methods on `GraphStore`, each with a default that goes one item at a time:
+  `get_nodes`, `neighbors_many`, and `edges_many` read many nodes, neighbours, or links at once;
+  `count_by_label` counts every label in one call; `upsert_conversations` and `set_embeddings`
+  write many at once. Search, the passages gathered for a question, the graph view, stats,
+  entity and topic lists, importing, indexing, and embedding use them, so a store on a server
+  answers in a few queries instead of one per item. Against a distant FalkorDB server a search
+  went from 46 queries and 10.6 seconds to 7 queries and 1 second, the graph view from about 400
+  queries and 105 seconds to 4 queries and 2.4 seconds, and loading the demo from 96 to 41
+  seconds, with the same results.
+- Finding the entities a question names looks up only the ones its words could name, by id,
+  instead of reading every entity.
+- CI runs the contract tests on both stores, and every test with FalkorDB as the store.
 
 ## [0.1.0] - 2026-09-24
 

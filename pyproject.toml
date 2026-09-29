@@ -53,6 +53,11 @@ Changelog = "https://github.com/cl0ver012/chatlore/blob/main/CHANGELOG.md"
 [project.scripts]
 chatlore = "chatlore.cli:run"
 
+[project.optional-dependencies]
+falkordb = [
+    "falkordb>=1.7",
+]
+
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
@@ -103,7 +108,7 @@ pretty = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec", "fastembed", "networkx"]
+module = ["sqlite_vec", "fastembed", "networkx", "falkordb", "falkordb.*", "redis", "redis.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

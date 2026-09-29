@@ -58,9 +58,9 @@ Extraction and chat use any OpenAI-compatible model, OpenRouter by default;
 see [docs/models.md](docs/models.md). The knowledge graph is described in
 [docs/extraction.md](docs/extraction.md), chat and the API in
 [docs/chat.md](docs/chat.md), the web interface in [docs/web.md](docs/web.md),
-setting up assistants over MCP in [docs/mcp.md](docs/mcp.md), archives and
-Markdown export in [docs/export.md](docs/export.md), and hosting the demo in
-[docs/hosting.md](docs/hosting.md).
+setting up assistants over MCP in [docs/mcp.md](docs/mcp.md), and archives and
+Markdown export in [docs/export.md](docs/export.md), and keeping the graph in
+FalkorDB instead of SQLite in [docs/falkordb.md](docs/falkordb.md).
 
 ## What ChatLore will do
 
@@ -95,8 +95,8 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M6 | Web UI: conversations, graph explorer, chat | basic version done |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done; ChatGPT through /mcp once the demo is online |
 | M8 | Easy to try: PyPI package, demo library, export and import | done, v0.1.0 |
-| M9 | Hosted demo | public mode, MCP over HTTP, and Docker image done; deployment next |
-| M10 | FalkorDB backend | planned |
+| M9 | Hosted demo | planned |
+| M10 | FalkorDB backend | done |
 
 ## Development setup
 
