@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from chatlore.cli import app
-from chatlore.store import open_store
+from chatlore.store import drop_store, open_store
 from tests.fakes import FakeEmbedder
 
 runner = CliRunner()
@@ -54,7 +54,7 @@ def test_dry_run_does_not_create_the_database(home: Path, fixtures: Path) -> Non
 def test_index_rebuilds_from_the_library(home: Path, fixtures: Path) -> None:
     runner.invoke(app, ["import", str(fixtures / "claude")])
     runner.invoke(app, ["import", str(fixtures / "gemini")])
-    (home / "chatlore.db").unlink()
+    drop_store(home)
 
     result = runner.invoke(app, ["index", "--rebuild"])
 

@@ -59,7 +59,8 @@ see [docs/models.md](docs/models.md). The knowledge graph is described in
 [docs/extraction.md](docs/extraction.md), chat and the API in
 [docs/chat.md](docs/chat.md), the web interface in [docs/web.md](docs/web.md),
 setting up assistants over MCP in [docs/mcp.md](docs/mcp.md), and archives and
-Markdown export in [docs/export.md](docs/export.md).
+Markdown export in [docs/export.md](docs/export.md), and keeping the graph in
+FalkorDB instead of SQLite in [docs/falkordb.md](docs/falkordb.md).
 
 ## What ChatLore will do
 
@@ -95,7 +96,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done for local assistants; ChatGPT with the hosted demo |
 | M8 | Easy to try: PyPI package, demo library, export and import | done, v0.1.0 |
 | M9 | Hosted demo | planned |
-| M10 | FalkorDB backend | planned |
+| M10 | FalkorDB backend | done |
 
 ## Development setup
 

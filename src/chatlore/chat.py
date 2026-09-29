@@ -18,6 +18,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 from chatlore.extraction import entity_key
+from chatlore.ids import entity_id
 from chatlore.llm import ChatMessage, StreamingLLM
 from chatlore.store import EdgeType, GraphStore, Label, Node
 
@@ -145,18 +146,29 @@ def mentioned_entities(store: GraphStore, question: str) -> list[Node]:
     Every run of up to four words is compared with the entities' names the way
     entities are matched to each other, so "claude code", "Claude-Code", and
     "claude codes" all find the entity Claude Code.
+
+    An entity's id is made from that same form of its name, so only the entities
+    the question could name are fetched, not all of them, and each is checked
+    against its name again.
     """
-    by_key = {entity_key(str(node.props["name"])): node for node in store.find_nodes(Label.ENTITY)}
     words = _WORD.findall(question)
-    found: dict[str, Node] = {}
+    keys: list[str] = []
     for size in range(min(MAX_NAME_WORDS, len(words)), 0, -1):
         for start in range(len(words) - size + 1):
             key = entity_key(" ".join(words[start : start + size]))
-            if len(key) < 2 or key in _NOT_NAMES:
-                continue
-            node = by_key.get(key)
-            if node is not None and node.id not in found:
-                found[node.id] = node
+            if len(key) >= 2 and key not in _NOT_NAMES:
+                keys.append(key)
+    nodes = store.get_nodes(entity_id(key) for key in keys)
+    found: dict[str, Node] = {}
+    for key in keys:
+        node = nodes.get(entity_id(key))
+        if (
+            node is not None
+            and node.label == Label.ENTITY
+            and entity_key(str(node.props["name"])) == key
+            and node.id not in found
+        ):
+            found[node.id] = node
     return list(found.values())
 
 
@@ -170,11 +182,9 @@ def _chunks_of(
     the ones about the question help. Without it, its most recent chunks.
     """
     lists: list[list[str]] = []
+    mentions = store.neighbors_many((entity.id for entity in entities), [EdgeType.MENTIONS], "in")
     for entity in entities:
-        chunks = [
-            chunk
-            for _, chunk in store.neighbors(entity.id, [EdgeType.MENTIONS], "in", limit=1_000_000)
-        ]
+        chunks = [chunk for _, chunk in mentions[entity.id]]
         if nearness is not None:
             ordered_chunks = sorted(
                 (chunk.id for chunk in chunks if chunk.id in nearness), key=nearness.__getitem__
@@ -203,8 +213,9 @@ def _notes(store: GraphStore, entities: Sequence[Node]) -> list[Note]:
     ]
     counts: dict[str, int] = {}
     topics: dict[str, Node] = {}
+    in_topics = store.neighbors_many((node.id for node in entities), [EdgeType.IN_TOPIC])
     for node in entities:
-        for _, topic in store.neighbors(node.id, [EdgeType.IN_TOPIC]):
+        for _, topic in in_topics[node.id]:
             counts[topic.id] = counts.get(topic.id, 0) + 1
             topics[topic.id] = topic
     for topic_id in sorted(counts, key=lambda key: -counts[key])[:MAX_TOPICS]:
@@ -236,8 +247,9 @@ def retrieve(
     best = sorted(scores, key=lambda chunk_id: -scores[chunk_id])[:limit]
 
     sources: list[Source] = []
+    chunks = store.get_nodes(best)
     for chunk_id in best:
-        node = store.get_node(chunk_id)
+        node = chunks.get(chunk_id)
         if node is None:
             continue
         props = node.props

@@ -37,7 +37,7 @@ from chatlore.embeddings import EmbeddingCache
 from chatlore.extraction import ExtractionCache
 from chatlore.library import AddOutcome, Library
 from chatlore.models import Conversation, Role
-from chatlore.store import Edge, GraphStore, Label, Node, open_store
+from chatlore.store import ConversationWriter, Edge, GraphStore, Label, Node, open_store
 
 FORMAT = "chatlore-archive"
 FORMAT_VERSION = 1
@@ -216,12 +216,13 @@ def import_archive(path: Path, home: Path, dry_run: bool = False) -> ImportRepor
         return report
 
     with Library(home) as library, open_store(home) as store, store.transaction():
-        for conversation in read_conversations(path):
-            outcome = library.add(conversation)
-            report.outcomes[outcome.value] += 1
-            report.messages += len(conversation.messages)
-            if outcome is not AddOutcome.UNCHANGED:
-                store.upsert_conversation(conversation)
+        with ConversationWriter(store) as writer:
+            for conversation in read_conversations(path):
+                outcome = library.add(conversation)
+                report.outcomes[outcome.value] += 1
+                report.messages += len(conversation.messages)
+                if outcome is not AddOutcome.UNCHANGED:
+                    writer.add(conversation)
         report.nodes, report.edges = restore_graph(store, *read_graph(path))
     restore_caches(path, home)
     return report

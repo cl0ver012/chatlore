@@ -163,8 +163,7 @@ def sync_embeddings(
             known.update(fresh)
 
         with store.transaction():
-            for node in batch:
-                store.set_embedding(node.id, known[hashes[node.id]])
+            store.set_embeddings({node.id: known[hashes[node.id]] for node in batch})
             store.set_meta(EMBEDDING_MODEL_KEY, embedder.name)
 
         report.embedded += len(missing)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
+import pytest
+
 from chatlore.models import ContentPart, Conversation, Message, Role, SourceKind
 from chatlore.store import Edge, EdgeType, Label, Node, SQLiteStore, open_store
 from chatlore.store.sqlite import fts_query
@@ -22,7 +24,10 @@ def test_data_persists_across_connections(tmp_path: Path) -> None:
         assert [h.node_id for h in store.search_vector([0.5, 0.5])] == ["n"]
 
 
-def test_open_store_creates_the_home_directory(tmp_path: Path) -> None:
+def test_open_store_creates_the_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CHATLORE_STORE", raising=False)
     home = tmp_path / "fresh" / "home"
 
     with open_store(home) as store:
