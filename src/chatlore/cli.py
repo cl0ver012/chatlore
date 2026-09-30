@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import sys
+import tempfile
 import threading
 import webbrowser
 from collections import Counter
@@ -36,10 +37,10 @@ from chatlore.extraction import ExtractionCache, entity_key
 from chatlore.importers import (
     ImporterError,
     ImportIssue,
-    detect_source,
     get_importer,
     make_note,
 )
+from chatlore.importers.intake import Intake, describe
 from chatlore.library import AddOutcome, Library
 from chatlore.llm import OPENROUTER_KEY_ENV, LLMError, llm_settings, make_llm
 from chatlore.paths import HOME_ENV, default_home, demo_home, spaces_home
@@ -183,9 +184,14 @@ def _describe_llm() -> str:
 
 @app.command("import")
 def import_(
-    path: Annotated[
-        Path,
-        typer.Argument(help="Export zip, extracted folder, JSON file, or Markdown folder."),
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            help=(
+                "Files, folders, or archives: chat exports, documents, notes, email, "
+                "data files, or zip, tar, 7z, and rar archives holding any of them."
+            ),
+        ),
     ],
     source: Annotated[
         str,
@@ -194,7 +200,7 @@ def import_(
             "-s",
             help=(
                 "chatgpt, claude, gemini, markdown, chatlore for an archive from "
-                "`chatlore export`, or auto to detect it from the content."
+                "`chatlore export`, or auto to recognise everything from its content."
             ),
         ),
     ] = "auto",
@@ -203,16 +209,31 @@ def import_(
         typer.Option("--dry-run", help="Parse and report without writing anything."),
     ] = False,
 ) -> None:
-    """Import an export into the local library. Safe to run repeatedly."""
-    if source == "chatlore" or (source == "auto" and is_archive(path)):
-        _import_archive(path, dry_run)
+    """Import exports, documents, and notes into the local library. Safe to run repeatedly.
+
+    Folders are searched and archives unpacked, archives inside them too. Chat
+    exports are recognised wherever they sit, other files become notes, and every
+    file that is skipped is listed with the reason.
+    """
+    if source == "chatlore" or (source == "auto" and len(paths) == 1 and is_archive(paths[0])):
+        for path in paths:
+            _import_archive(path, dry_run)
         return
+    if source != "auto":
+        for path in paths:
+            _import_as(path, source, dry_run)
+        return
+    _import_anything(paths, dry_run)
+
+
+def _import_as(path: Path, source: str, dry_run: bool) -> None:
+    """Import one path with the importer named, as chatlore import always has."""
     issues: list[ImportIssue] = []
     outcomes: Counter[str] = Counter()
     messages = 0
 
     try:
-        kind = detect_source(path) if source == "auto" else get_importer(source).kind
+        kind = get_importer(source).kind
         importer = get_importer(kind.value)
         with (
             Library(default_home()) as library,
@@ -233,8 +254,62 @@ def import_(
         console.print(f"[red]Import failed:[/red] {error}")
         raise typer.Exit(code=1) from error
 
-    title = f"{kind.value} import" + (" (dry run)" if dry_run else "")
-    table = Table(title=title, show_header=False)
+    _import_summary(f"{kind.value} import", outcomes, messages, issues, dry_run)
+
+
+def _import_anything(paths: list[Path], dry_run: bool) -> None:
+    """Import whatever the paths hold, recognising each file from its content."""
+    issues: list[ImportIssue] = []
+    outcomes: Counter[str] = Counter()
+    messages = 0
+    home = default_home()
+    with tempfile.TemporaryDirectory(prefix="chatlore-import-") as folder:
+        intake = Intake(Path(folder))
+        try:
+            intake.scan(paths)
+            if not intake.found_anything():
+                console.print("[red]Import failed:[/red] nothing ChatLore can read was found.")
+                for line in describe(intake.skipped):
+                    console.print(f"  [yellow]skipped[/yellow] {escape(line)}")
+                raise typer.Exit(code=1)
+            with (
+                Library(home) as library,
+                _store(dry_run) as store,
+                _writes(store),
+                _writer(store) as writer,
+            ):
+                for conversation in intake.conversations(issues.append):
+                    messages += len(conversation.messages)
+                    if dry_run:
+                        outcomes["parsed"] += 1
+                        continue
+                    outcome = library.add(conversation)
+                    outcomes[outcome.value] += 1
+                    if outcome is not AddOutcome.UNCHANGED and writer is not None:
+                        writer.add(conversation)
+            for archive, _ in intake.archives:
+                report = import_archive(archive, home, dry_run=dry_run)
+                outcomes.update(report.outcomes)
+                messages += report.messages
+                intake.sources["archive"] += sum(report.outcomes.values())
+        except (ImporterError, ArchiveError) as error:
+            console.print(f"[red]Import failed:[/red] {error}")
+            raise typer.Exit(code=1) from error
+
+    kinds = [kind for kind, count in intake.sources.items() if count]
+    title = f"{kinds[0]} import" if len(kinds) == 1 else "import"
+    _import_summary(title, outcomes, messages, issues, dry_run, intake)
+
+
+def _import_summary(
+    title: str,
+    outcomes: Counter[str],
+    messages: int,
+    issues: list[ImportIssue],
+    dry_run: bool,
+    intake: Intake | None = None,
+) -> None:
+    table = Table(title=title + (" (dry run)" if dry_run else ""), show_header=False)
     table.add_column("key", style="bold")
     table.add_column("value", justify="right")
     if dry_run:
@@ -243,10 +318,18 @@ def import_(
         for outcome in AddOutcome:
             table.add_row(outcome.value, str(outcomes[outcome.value]))
     table.add_row("messages", str(messages))
+    if intake is not None and len([count for count in intake.sources.values() if count]) > 1:
+        for kind, count in sorted(intake.sources.items()):
+            table.add_row(f"from {kind}", str(count))
     table.add_row("skipped records", str(len(issues)))
+    if intake is not None:
+        table.add_row("skipped files", str(len(intake.skipped)))
     console.print(table)
 
     _print_issues(issues)
+    if intake is not None:
+        for line in describe(intake.skipped):
+            console.print(f"  [yellow]skipped[/yellow] {escape(line)}")
     if not dry_run:
         console.print(f"Library: {display_path(default_home())}")
 

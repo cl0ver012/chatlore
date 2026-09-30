@@ -24,6 +24,8 @@ class SourceKind(StrEnum):
     CLAUDE = "claude"
     GEMINI = "gemini"
     MARKDOWN = "markdown"
+    DOCUMENT = "document"
+    EMAIL = "email"
     NOTE = "note"
     CHATLORE = "chatlore"
     CLAUDE_CODE = "claude_code"

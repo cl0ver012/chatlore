@@ -1,15 +1,18 @@
 # Importing your data
 
 ```bash
-chatlore import <path>            # detects the source from the content
+chatlore import <path>...         # anything: files, folders, archives
 chatlore import <path> --source chatgpt
 chatlore import <path> --dry-run  # parse and report, write nothing
 chatlore stats                    # what the library holds
 ```
 
-`<path>` can be the zip exactly as you downloaded it, the extracted folder, or
-the JSON file itself. Importing is idempotent: run it again after a fresh
-export and only new or changed conversations are written.
+Give it as many files, folders, and archives as you like, and it works out what
+each one is from its content: the export zip exactly as you downloaded it, the
+extracted folder, a folder of documents, or all of them at once. The web
+interface does the same under **Your data**, for files or a whole folder.
+Importing is idempotent: run it again after a fresh export and only new or
+changed conversations are written.
 
 Everything lands in `~/.chatlore/conversations/<source>/<id>.json` (override
 the location with `--home` or `CHATLORE_HOME`). The files are plain JSON and stay readable
@@ -18,6 +21,42 @@ SQLite database holding the graph and the search indexes.
 
 An archive written by `chatlore export` is recognised too, and brings its
 knowledge graph and caches along; see [export.md](export.md).
+
+## What can be imported
+
+| What | Files | Becomes |
+|---|---|---|
+| Chat exports | ChatGPT and Claude `conversations.json`, Gemini `MyActivity.json`, wherever they sit | conversations |
+| Notes | Markdown and text (`.md`, `.markdown`, `.txt`), Obsidian vaults | notes, source `markdown` |
+| Documents | PDF, Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`), OpenDocument (`.odt`, `.odp`, `.ods`), EPUB, RTF, web pages (`.html`) | notes, source `document` |
+| Data | CSV and TSV, JSON and JSON Lines, XML | notes: a line per row, or `key.path: value` lines |
+| Code and text | source code, `.log`, `.rst`, `.org`, subtitles, and any other file that is plain text | notes; code keeps its language |
+| Email | `.eml`, and `.mbox` mailboxes | one conversation per email, source `email` |
+| Archives | zip, tar, tar.gz, tgz, tar.bz2, tar.xz, gz, 7z, rar | whatever they hold |
+
+**Archives** are unpacked, and archives inside them too, four levels deep, so a
+zip of folders of zips works, and so does a Google Takeout split into several
+zips. zip, tar, and gz need nothing extra. 7z and rar are unpacked with
+`bsdtar`, which comes with Windows 10 and later and with macOS; on Linux,
+install `libarchive-tools`. Together they may unpack to at most 2 GB, 100,000
+files, and nothing is ever written outside the folder they are unpacked into.
+
+**Chat exports** are found by their content, not their names or places. The
+other files of an export, such as ChatGPT's `chat.html`, which holds the same
+chats again, are skipped. In a Google Takeout, Gemini's activity is imported
+and other products' activity is skipped, while other files, such as Drive
+documents, are read like any others.
+
+**Documents** become notes of one message each, titled from the document when
+it names itself (a Word title, a PDF's metadata, a web page's `<title>`) and
+otherwise by file name. Each is known by its path within what was imported, so
+importing the same folder again updates the same notes. A scanned PDF with no
+text layer has no text to read and is skipped.
+
+**Skipped files** are listed at the end with the reason: pictures, audio,
+video, programs, files that are not text, and documents that could not be read.
+Folders such as `.git` and `node_modules` are left out, and so are system files
+like `.DS_Store`.
 
 ## Searching
 

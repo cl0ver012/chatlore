@@ -198,18 +198,27 @@
     </header>
     <div class="sheet-body">
       <label id="data-drop" class="dropzone">
-        <input id="data-file" type="file" accept=".zip,.json,.md,.markdown,.txt">
+        <input id="data-file" type="file" multiple>
         <svg viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>
-        <strong>Drop an export here, or choose a file</strong>
-        <span>ChatGPT or Claude export (.zip), Gemini Takeout (.zip or MyActivity.json),
-          Markdown notes (.zip or .md), or a ChatLore archive. Up to <span id="data-max">200</span> MB.</span>
+        <strong>Drop files or folders here, or choose files</strong>
+        <span>Chat exports from ChatGPT, Claude, and Gemini, documents (PDF, Word, PowerPoint,
+          Excel, EPUB, web pages), notes and text, email, CSV and JSON, and zip, tar, 7z, or rar
+          archives of any of them. Up to <span id="data-max">200</span> MB in all.</span>
       </label>
+      <p class="data-alt">
+        <button type="button" id="data-folder-pick" class="link">Choose a whole folder</button>
+        <input id="data-folder" type="file" webkitdirectory multiple hidden>
+      </p>
       <p id="data-privacy" class="data-note" hidden></p>
       <div id="data-progress" class="data-progress" hidden>
         <div class="data-stage"><span id="data-stage"></span><span id="data-count" class="muted"></span></div>
         <progress id="data-bar" max="1" value="0"></progress>
         <p id="data-summary" class="muted"></p>
         <ul id="data-notes"></ul>
+        <details id="data-skipped" hidden>
+          <summary></summary>
+          <ul></ul>
+        </details>
       </div>
       <h4>Download</h4>
       <p class="muted data-help">Everything in this library, to import into ChatLore anywhere, or as Markdown files to read.</p>

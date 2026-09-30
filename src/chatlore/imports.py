@@ -11,23 +11,24 @@ an import that fails or is cancelled halfway leaves what it had done.
 from __future__ import annotations
 
 import logging
+import re
+import shutil
 import tempfile
 import threading
-import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Protocol
 
-from chatlore.archive import ArchiveError, import_archive, is_archive
+from chatlore.archive import ArchiveError, import_archive
 from chatlore.embeddings import Embedder, EmbeddingCache, EmbeddingError
 from chatlore.extraction import ExtractionCache
-from chatlore.importers import ImporterError, detect_source, get_importer
+from chatlore.importers import ImporterError
+from chatlore.importers.intake import Intake
 from chatlore.library import AddOutcome, Library
 from chatlore.llm import LLM, LLMError
-from chatlore.models import SourceKind
 from chatlore.pipeline import (
     EmbeddingModelMismatchError,
     pending_duplicates,
@@ -45,12 +46,6 @@ from chatlore.pipeline import (
 from chatlore.store import ConversationWriter, GraphStore
 
 logger = logging.getLogger(__name__)
-
-SUFFIXES = frozenset({".zip", ".json", ".md", ".markdown", ".txt"})
-"""File types an upload may have; they tell the importers what they are reading."""
-MAX_UNPACKED = 2_000_000_000
-"""Bytes of text a zip may unpack to, so a small zip cannot fill the disk."""
-_TEXT = (".json", ".jsonl", ".md", ".markdown", ".txt")
 
 
 class _ClosableLLM(LLM, Protocol):
@@ -77,6 +72,12 @@ class ImportStatus:
     conversations: int = 0
     messages: int = 0
     skipped: int = 0
+    """Records the importers could not read, inside files they did read."""
+    sources: dict[str, int] = field(default_factory=dict)
+    """Conversations found, by where they came from: chatgpt, document, email, ..."""
+    skipped_files: int = 0
+    skipped_shown: list[list[str]] = field(default_factory=list)
+    """The first skipped files, each with the reason."""
     notes: list[str] = field(default_factory=list)
     error: str | None = None
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -119,7 +120,10 @@ class Imports:
     def start(
         self, home: Path, upload: Path, name: str, store: Callable[[], GraphStore]
     ) -> ImportStatus:
-        """Queue ``upload`` for the library at ``home``, whose graph ``store`` opens."""
+        """Queue the files in the folder ``upload`` for the library at ``home``.
+
+        ``store`` opens the library's graph. The folder is deleted when the import ends.
+        """
         status = ImportStatus(file=name)
         with self._lock:
             self._status[home] = status
@@ -191,7 +195,7 @@ class Imports:
         finally:
             if graph is not None:
                 graph.close()
-            upload.unlink(missing_ok=True)
+            shutil.rmtree(upload, ignore_errors=True)
             status.finished_at = datetime.now(UTC).isoformat()
             with self._lock:
                 self._cancelled.discard(home)
@@ -254,70 +258,58 @@ class Imports:
             llm.close()
 
 
-def upload_suffix(name: str) -> str:
-    """The suffix to save an upload with, taken from its name when it is one ChatLore reads."""
-    suffix = PurePosixPath(name.replace("\\", "/")).suffix.lower()
-    return suffix if suffix in SUFFIXES else ""
+_UNSAFE = re.compile(r'[<>:"|?*\x00-\x1f]')
+_MAX_PART = 120
+_MAX_PARTS = 24
+_SKIPPED_SHOWN = 50
 
 
-def _import(upload: Path, home: Path, graph: GraphStore, status: ImportStatus) -> None:
-    """Add the upload's conversations to the library and its graph."""
-    if zipfile.is_zipfile(upload):
-        _check_unpacked_size(upload)
-    if is_archive(upload):
-        report = import_archive(upload, home, store=graph)
-        status.conversations = report.outcomes[AddOutcome.NEW] + report.outcomes[AddOutcome.UPDATED]
-        status.messages = report.messages
-        return
-    with tempfile.TemporaryDirectory() as folder:
-        try:
-            path, kind = upload, detect_source(upload)
-        except ImporterError:
-            unpacked = _markdown_folder(upload, Path(folder))
-            if unpacked is None:
-                raise
-            path, kind = unpacked, SourceKind.MARKDOWN
+def safe_relative(name: str) -> str:
+    """An upload's path within its batch, made safe: no absolute paths, no ``..``.
+
+    Browsers send a file's path within the folder it was chosen from, such as
+    ``Export/conversations.json``; that path is kept, since it tells the
+    importers what they are reading.
+    """
+    parts: list[str] = []
+    for part in name.replace("\\", "/").split("/"):
+        part = _UNSAFE.sub("_", part).strip().rstrip(". ")
+        if not part or part in {".", ".."}:
+            continue
+        parts.append(part[:_MAX_PART])
+    return "/".join(parts[-_MAX_PARTS:]) or "upload"
+
+
+def _import(folder: Path, home: Path, graph: GraphStore, status: ImportStatus) -> None:
+    """Add everything the uploaded files hold to the library and its graph."""
+    with tempfile.TemporaryDirectory(prefix="chatlore-unpacked-") as workdir:
+        intake = Intake(Path(workdir))
         issues: list[object] = []
-        with (
-            Library(home) as library,
-            graph.transaction(),
-            ConversationWriter(graph) as writer,
-        ):
-            for conversation in get_importer(kind.value).parse(path, issues.append):
-                status.messages += len(conversation.messages)
-                if library.add(conversation) is not AddOutcome.UNCHANGED:
-                    status.conversations += 1
-                    writer.add(conversation)
-        status.skipped = len(issues)
-        if status.conversations == 0 and status.messages == 0:
-            raise ImporterError("the upload holds no conversations ChatLore can read")
-
-
-def _check_unpacked_size(upload: Path) -> None:
-    with zipfile.ZipFile(upload) as archive:
-        size = sum(
-            member.file_size
-            for member in archive.infolist()
-            if member.filename.lower().endswith(_TEXT)
-        )
-    if size > MAX_UNPACKED:
-        raise ImporterError("the zip unpacks to more text than this server accepts")
-
-
-def _markdown_folder(upload: Path, folder: Path) -> Path | None:
-    """Unpack a zip of Markdown or text notes, as a vault is shared; None for any other zip."""
-    if not zipfile.is_zipfile(upload):
-        return None
-    with zipfile.ZipFile(upload) as archive:
-        notes = [
-            member
-            for member in archive.infolist()
-            if not member.is_dir()
-            and member.filename.lower().endswith((".md", ".markdown", ".txt"))
-        ]
-        if not notes:
-            return None
-        target = folder / "notes"
-        for member in notes:
-            archive.extract(member, target)  # zipfile keeps members inside the target
-    return target
+        try:
+            intake.scan([folder])
+            with (
+                Library(home) as library,
+                graph.transaction(),
+                ConversationWriter(graph) as writer,
+            ):
+                for conversation in intake.conversations(issues.append):
+                    status.messages += len(conversation.messages)
+                    if library.add(conversation) is not AddOutcome.UNCHANGED:
+                        status.conversations += 1
+                        writer.add(conversation)
+            for archive, _ in intake.archives:
+                report = import_archive(archive, home, store=graph)
+                status.conversations += (
+                    report.outcomes[AddOutcome.NEW] + report.outcomes[AddOutcome.UPDATED]
+                )
+                status.messages += report.messages
+                intake.sources["archive"] += sum(report.outcomes.values())
+        finally:
+            status.sources = {kind: count for kind, count in intake.sources.items() if count}
+            status.skipped = len(issues)
+            status.skipped_files = len(intake.skipped)
+            status.skipped_shown = [
+                [item.path, item.reason] for item in intake.skipped[:_SKIPPED_SHOWN]
+            ]
+        if not intake.found_anything():
+            raise ImporterError("nothing ChatLore can read was found in the upload")

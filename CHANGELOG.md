@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `Dockerfile` for the hosted demo, with the demo library and embedding model built in. CI
   builds it, starts it, and checks the web interface, the API, and a tool call over MCP. Guide
   in `docs/hosting.md`.
+- Import anything: `chatlore import` takes any number of files, folders, and archives, and
+  **Your data** in the web interface takes many files or a whole folder. Archives (zip, tar,
+  gz, and with bsdtar 7z and rar) are unpacked, nested ones too; chat exports are recognised by
+  their content wherever they sit; documents become notes: PDF, Word, PowerPoint, Excel,
+  OpenDocument, EPUB, RTF, web pages, CSV, JSON, XML, code, and any plain text; email becomes a
+  conversation per message. Skipped files are listed with the reason. New sources `document`
+  and `email`. Guide in `docs/importers.md`.
+- `POST /library/files` adds a file, with its path, to a batch that `POST /library/import`
+  then imports.
 - **Your data** in the web interface: upload a ChatGPT, Claude, or Gemini export, Markdown
   notes, or a ChatLore archive, and watch it be imported, embedded, and read into the knowledge
   graph in the background; download the library as a ChatLore archive or as Markdown.

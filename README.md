@@ -6,8 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
-**Status: pre-alpha.** Importing and search work today: ChatGPT, Claude, Gemini,
-and Markdown exports land in a local library and a SQLite graph store you can
+**Status: pre-alpha.** Importing and search work today: ChatGPT, Claude, and
+Gemini exports, notes, documents (PDF, Word, Excel, and more), email, and
+archives of any of them land in a local library and a SQLite graph store you can
 search from the terminal by words, by meaning, or both. A language model turns
 them into a knowledge graph of entities, relationships, and topics that you can
 browse and search, and you can ask questions and get answers with sources, in
@@ -34,7 +35,7 @@ Asking questions also needs a model key; see [docs/models.md](docs/models.md).
 
 ```bash
 uv tool install chatlore                             # or: pipx install chatlore
-chatlore import path/to/chatgpt-export.zip
+chatlore import path/to/chatgpt-export.zip ~/Documents/notes   # exports, documents, archives
 chatlore search "postgres index"
 chatlore process                                     # chunk and embed, local model
 chatlore search "why was my query slow" --semantic
@@ -102,6 +103,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M9 | Hosted demo | public mode, MCP over HTTP, and Docker image done; deployment next |
 | M10 | FalkorDB backend | done |
 | M11 | Your own data in the web interface: upload, export, private visitor libraries | done |
+| M12 | Import anything: documents, email, data files, folders, and archives | done |
 
 ## Development setup
 

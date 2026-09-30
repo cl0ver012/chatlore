@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -76,3 +77,37 @@ def test_note_and_stats(home: Path, fixtures: Path) -> None:
     assert totals[SourceKind.MARKDOWN.value].conversations == 4
     assert totals[SourceKind.NOTE.value].conversations == 1
     assert "markdown" in stats.output and "total" in stats.output
+
+
+def test_import_takes_many_paths_of_any_kind(home: Path, fixtures: Path, tmp_path: Path) -> None:
+    from tests import samples
+
+    samples.pdf(tmp_path / "report.pdf", "Tide report", ["High tide at 14:05"])
+    (tmp_path / "photo.jpg").write_bytes(b"\x00")
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            str(fixtures / "claude"),
+            str(tmp_path / "report.pdf"),
+            str(tmp_path / "photo.jpg"),
+        ],
+    )
+
+    output = " ".join(re.sub(r"[^\w.:,/ -]", " ", result.output).split())
+    assert result.exit_code == 0, result.output
+    assert "from claude 3" in output and "from document 1" in output
+    assert "skipped files 1" in output
+    assert "photo.jpg: images, audio, video, and programs are not read" in output
+    assert Library(home).stats()["document"].conversations == 1
+
+
+def test_import_says_when_nothing_can_be_read(home: Path, tmp_path: Path) -> None:
+    (tmp_path / "photo.jpg").write_bytes(b"\x00")
+
+    result = runner.invoke(app, ["import", str(tmp_path / "photo.jpg")])
+
+    assert result.exit_code == 1
+    assert "nothing ChatLore can read was found" in result.output
+    assert not home.exists()
