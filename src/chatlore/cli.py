@@ -11,6 +11,7 @@ import webbrowser
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -41,7 +42,7 @@ from chatlore.importers import (
 )
 from chatlore.library import AddOutcome, Library
 from chatlore.llm import OPENROUTER_KEY_ENV, LLMError, llm_settings, make_llm
-from chatlore.paths import HOME_ENV, default_home, demo_home
+from chatlore.paths import HOME_ENV, default_home, demo_home, spaces_home
 from chatlore.pipeline import (
     EmbeddingModelMismatchError,
     pending_duplicates,
@@ -707,6 +708,7 @@ def ask(
 
 
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+MAX_UPLOAD_MB = 200
 
 
 @app.command()
@@ -743,16 +745,66 @@ def serve(
             help="With --public: questions all visitors may ask per day.",
         ),
     ] = ChatLimits().per_day,
+    uploads: Annotated[
+        bool,
+        typer.Option(
+            "--uploads",
+            help=(
+                "With --public: let each visitor upload an export into a private library "
+                "of their own, deleted after --keep-hours."
+            ),
+        ),
+    ] = False,
+    keep_hours: Annotated[
+        int,
+        typer.Option(
+            "--keep-hours", min=1, help="With --uploads: hours a visitor's library stays."
+        ),
+    ] = 24,
+    spaces_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--spaces-dir",
+            help="With --uploads: where visitors' libraries are kept (~/.chatlore-spaces).",
+            show_default=False,
+        ),
+    ] = None,
+    max_upload_mb: Annotated[
+        int, typer.Option("--max-upload-mb", min=1, help="Largest upload taken, in MB.")
+    ] = MAX_UPLOAD_MB,
+    extract_limit: Annotated[
+        int | None,
+        typer.Option(
+            "--extract-limit",
+            min=1,
+            help="Passages of each upload the model reads into the graph; all by default.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
-    """Serve the web interface, the REST API, and MCP at /mcp. API docs are at /docs."""
+    """Serve the web interface, the REST API, and MCP at /mcp. API docs are at /docs.
+
+    The web interface can upload exports into the library and download it. On a
+    public server, --uploads gives each visitor who uploads a private library.
+    """
     import uvicorn  # loaded here so other commands start without the web stack
 
     from chatlore.api import create_app
+    from chatlore.spaces import Spaces
 
     options: dict[str, Any] = {}
+    settings: dict[str, Any] = {
+        "max_upload": max_upload_mb * 1_000_000,
+        "extract_limit": extract_limit,
+    }
     if public:
         limits = ChatLimits(per_visitor_hour=questions_per_hour, per_day=questions_per_day)
-        application = create_app(public=True, limits=limits)
+        visitors = None
+        if uploads:
+            visitors = Spaces(
+                (spaces_dir or spaces_home()).expanduser(), keep=timedelta(hours=keep_hours)
+            )
+        application = create_app(public=True, limits=limits, spaces=visitors, **settings)
         # The proxy in front says who the visitor is; without it every visitor
         # would share the proxy's address, and its limit.
         options = {"proxy_headers": True, "forwarded_allow_ips": "*"}
@@ -761,12 +813,17 @@ def serve(
             f"this library and ask {questions_per_hour} questions an hour each, "
             f"{questions_per_day} a day in all."
         )
+        if visitors is not None:
+            console.print(
+                f"Visitors can upload their own exports: each gets a private library in "
+                f"{display_path(visitors.root)}, deleted after {keep_hours} hours."
+            )
     else:
-        application = create_app()
+        application = create_app(**settings)
         if host not in _LOCAL_HOSTS:
             console.print(
                 "[yellow]Listening beyond this machine: anyone who can reach this address "
-                "can read your library.[/yellow]"
+                "can read your library and import into it.[/yellow]"
             )
     console.print(f"ChatLore API on http://{host}:{port}  (docs: http://{host}:{port}/docs)")
     uvicorn.run(application, host=host, port=port, log_level="warning", **options)

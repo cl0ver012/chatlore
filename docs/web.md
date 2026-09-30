@@ -28,6 +28,27 @@ follows the system's light or dark setting.
   is a circle sized by how often it is mentioned and coloured by its topic, and
   related entities are linked.
 
+## Your data
+
+**Your data**, in the navigation, imports an export and downloads the library:
+
+- Drop a file on the dialog, or choose one: a ChatGPT or Claude export (.zip),
+  Gemini Takeout (.zip or MyActivity.json), Markdown notes (.zip or .md), or a
+  ChatLore archive. Uploads may be up to 200 MB, or what `--max-upload-mb` sets.
+- The import runs in the background, like `chatlore import`, `chatlore
+  process`, and `chatlore extract` one after another, and the dialog shows each
+  step with its progress: importing, preparing search, reading with the language
+  model, summarising, linking names for the same thing, and topics. Without a
+  model key, everything but the knowledge graph is built. When it is done,
+  **Show the library** reloads the page on it.
+- **ChatLore archive** downloads the whole library, graph and caches included,
+  to import anywhere; **Markdown** downloads one readable file per conversation.
+  See [export.md](export.md).
+
+On your own machine the upload goes into the library itself. On a public server
+that takes uploads, it goes into a private library of the visitor's own; see
+[hosting.md](hosting.md#visitors-own-data).
+
 ## Exploring the graph
 
 The graph fills the page, with a floating toolbar, a legend of the largest

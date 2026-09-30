@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `Dockerfile` for the hosted demo, with the demo library and embedding model built in. CI
   builds it, starts it, and checks the web interface, the API, and a tool call over MCP. Guide
   in `docs/hosting.md`.
+- **Your data** in the web interface: upload a ChatGPT, Claude, or Gemini export, Markdown
+  notes, or a ChatLore archive, and watch it be imported, embedded, and read into the knowledge
+  graph in the background; download the library as a ChatLore archive or as Markdown.
+  `POST /library/import`, `GET /library`, `GET /library/export`, and `DELETE /library` do the
+  same over the API. Guide in `docs/web.md`.
+- `chatlore serve --public --uploads` lets visitors try ChatLore on their own conversations:
+  each who uploads gets a private library tied to their browser, deleted after 24 hours
+  (`--keep-hours`) or when they choose, while everyone else sees the server's library.
+  `--max-upload-mb` and `--extract-limit` set how large an upload may be and how much of it the
+  model reads. The hosted demo image turns it on. Guide in `docs/hosting.md`.
+- `export_archive` and `import_archive` take a store that is already open.
 - A FalkorDB store, chosen with `CHATLORE_STORE=falkordb`, with `CHATLORE_FALKORDB_URL` and
   `CHATLORE_FALKORDB_GRAPH` saying where. Every command, the web interface, and the MCP server
   work on it as on SQLite, and it passes the same contract tests. The client is an optional

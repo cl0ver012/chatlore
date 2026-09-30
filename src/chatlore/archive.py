@@ -24,7 +24,7 @@ import tempfile
 import zipfile
 from collections import Counter
 from collections.abc import Iterable, Iterator
-from contextlib import closing
+from contextlib import AbstractContextManager, closing, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,25 +89,26 @@ class ImportReport:
 # -- archives ----------------------------------------------------------------
 
 
-def export_archive(home: Path, target: Path) -> ExportReport:
+def export_archive(home: Path, target: Path, store: GraphStore | None = None) -> ExportReport:
     """Write the library at ``home`` into one archive at ``target``.
 
-    The file is written next to ``target`` and moved into place at the end, so
-    a failed export never leaves half an archive behind.
+    The graph is read from ``store``, or the library's own store when none is
+    given. The file is written next to ``target`` and moved into place at the
+    end, so a failed export never leaves half an archive behind.
     """
     partial = target.with_name(target.name + ".partial")
     conversations = 0
     caches: list[str] = []
     try:
         with (
-            open_store(home) as store,
+            _opened(home, store) as graph,
             zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as archive,
         ):
             with archive.open(CONVERSATIONS, "w") as handle:
                 for conversation in Library(home):
                     handle.write(_line(conversation.model_dump(mode="json")))
                     conversations += 1
-            nodes, edges = _derived_graph(store)
+            nodes, edges = _derived_graph(graph)
             with archive.open(GRAPH, "w") as handle:
                 for node in nodes:
                     handle.write(_line({"node": [node.id, node.label, node.props]}))
@@ -197,13 +198,16 @@ def read_graph(path: Path) -> tuple[list[Node], list[Edge]]:
     return nodes, edges
 
 
-def import_archive(path: Path, home: Path, dry_run: bool = False) -> ImportReport:
+def import_archive(
+    path: Path, home: Path, dry_run: bool = False, store: GraphStore | None = None
+) -> ImportReport:
     """Add an archive's conversations, graph, and caches to the library at ``home``.
 
     Conversations are added like any import, so importing twice changes nothing
     and a conversation already in the library is replaced by the archive's copy
-    only when they differ. Nodes and edges are merged into the graph, and cache
-    entries the library lacks are added to its caches.
+    only when they differ. Nodes and edges are merged into the graph, in
+    ``store`` or the library's own store, and cache entries the library lacks
+    are added to its caches.
     """
     read_manifest(path)
     report = ImportReport()
@@ -215,17 +219,22 @@ def import_archive(path: Path, home: Path, dry_run: bool = False) -> ImportRepor
         report.nodes, report.edges = len(nodes), len(edges)
         return report
 
-    with Library(home) as library, open_store(home) as store, store.transaction():
-        with ConversationWriter(store) as writer:
+    with Library(home) as library, _opened(home, store) as graph, graph.transaction():
+        with ConversationWriter(graph) as writer:
             for conversation in read_conversations(path):
                 outcome = library.add(conversation)
                 report.outcomes[outcome.value] += 1
                 report.messages += len(conversation.messages)
                 if outcome is not AddOutcome.UNCHANGED:
                     writer.add(conversation)
-        report.nodes, report.edges = restore_graph(store, *read_graph(path))
+        report.nodes, report.edges = restore_graph(graph, *read_graph(path))
     restore_caches(path, home)
     return report
+
+
+def _opened(home: Path, store: GraphStore | None) -> AbstractContextManager[GraphStore]:
+    """The store given, left open for its owner, or the library's own, closed after."""
+    return nullcontext(store) if store is not None else open_store(home)
 
 
 def restore_graph(store: GraphStore, nodes: list[Node], edges: list[Edge]) -> tuple[int, int]:

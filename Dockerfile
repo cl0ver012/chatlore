@@ -1,5 +1,7 @@
 # The hosted ChatLore demo: the made-up demo library behind the public web
-# interface, API, and MCP endpoint. See docs/hosting.md.
+# interface, API, and MCP endpoint, where visitors can also upload their own
+# export into a private library that is deleted after 24 hours. See
+# docs/hosting.md.
 #
 #   docker build -t chatlore-demo .
 #   docker run -p 7860:7860 -e OPENROUTER_API_KEY=... chatlore-demo
@@ -28,4 +30,4 @@ RUN chatlore demo --no-serve \
 
 EXPOSE 7860
 # PORT is set by hosts such as Render and Fly.io; Hugging Face Spaces uses 7860.
-CMD ["sh", "-c", "exec chatlore --home \"$HOME/.chatlore-demo\" serve --public --host 0.0.0.0 --port \"${PORT:-7860}\""]
+CMD ["sh", "-c", "exec chatlore --home \"$HOME/.chatlore-demo\" serve --public --uploads --host 0.0.0.0 --port \"${PORT:-7860}\""]

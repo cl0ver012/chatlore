@@ -9,6 +9,12 @@ these endpoints.
 The MCP server is served at /mcp too, over streamable HTTP, for assistants
 that connect to a URL instead of starting ``chatlore mcp``.
 
+The web interface can also upload an export, which is imported, embedded, and
+read into the knowledge graph in the background, and download the library as
+an archive or Markdown. On a public server that takes uploads, each visitor who
+uploads gets a private library of their own that is deleted after a while
+(``chatlore.spaces``); everyone else sees the server's library.
+
 Each request opens the store and closes it again, so requests never share a
 database connection across threads. The server listens on 127.0.0.1 unless told
 otherwise, because the library is private. A public server, such as the hosted
@@ -18,29 +24,43 @@ for with the host's key.
 
 from __future__ import annotations
 
+import functools
+import shutil
+import tempfile
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import unquote
 
+import anyio
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.staticfiles import StaticFiles
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.responses import Response
-from starlette.types import Scope
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from chatlore import __version__
+from chatlore.archive import export_archive, export_markdown
 from chatlore.chat import MAX_SOURCES, ChatLimits, Context, Source, answer, cited, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
+from chatlore.imports import Imports, upload_suffix
+from chatlore.library import Library
 from chatlore.llm import LLMError, make_llm
 from chatlore.mcp_server import create_server
 from chatlore.paths import default_home
 from chatlore.search import hybrid_search
+from chatlore.spaces import COOKIE, Space, Spaces
 from chatlore.store import Edge, EdgeType, GraphStore, Label, Node, open_store
 
 WEB = Path(__file__).parent / "web"
@@ -149,8 +169,62 @@ def _topic(node: Node, entities: int | None = None) -> dict[str, Any]:
     }
 
 
+MAX_UPLOAD = 200_000_000
+"""Bytes an upload may have unless the server says otherwise."""
+REQUEST_HEADER = "X-ChatLore"
+"""Sent by the web interface with every change. Another website cannot send it
+without the browser first asking this server, which does not allow it, so it
+cannot upload or delete through a visitor's browser."""
+_SWEEP_SECONDS = 600
+
+# The visitor's own library, when the request carries a token for one.
+_visitor: ContextVar[Space | None] = ContextVar("chatlore_visitor", default=None)
+
+
+class _Visitors:
+    """Serve each request from its visitor's own library, when it has one."""
+
+    def __init__(self, app: ASGIApp, spaces: Spaces) -> None:
+        self.app = app
+        self.spaces = spaces
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        space = None
+        if scope["type"] == "http":
+            space = self.spaces.find(_cookie(scope, COOKIE))
+        reset = _visitor.set(space)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _visitor.reset(reset)
+
+
+def _cookie(scope: Scope, name: str) -> str | None:
+    for key, value in scope.get("headers", []):
+        if key == b"cookie":
+            cookies: SimpleCookie = SimpleCookie()
+            try:
+                cookies.load(value.decode("latin-1"))
+            except Exception:  # a malformed cookie header is no token
+                return None
+            if name in cookies:
+                return cookies[name].value
+    return None
+
+
+def _changes_allowed(request: Request) -> None:
+    if request.headers.get(REQUEST_HEADER) != "1":
+        raise HTTPException(403, f"changes need the {REQUEST_HEADER} header")
+
+
 def create_app(
-    home: Path | None = None, *, public: bool = False, limits: ChatLimits | None = None
+    home: Path | None = None,
+    *,
+    public: bool = False,
+    limits: ChatLimits | None = None,
+    spaces: Spaces | None = None,
+    max_upload: int = MAX_UPLOAD,
+    extract_limit: int | None = None,
 ) -> FastAPI:
     """The API over the library in ``home``, or the default ChatLore home.
 
@@ -159,8 +233,13 @@ def create_app(
     be reached from the internet. Otherwise /mcp only answers requests addressed
     to this machine, which keeps other websites from reaching it through the
     browser. ``limits`` caps the questions sent to the language model.
+
+    Uploads go into the library on a private server. A public one takes them
+    only with ``spaces``, and puts each visitor's in a library of their own.
+    ``extract_limit`` caps how many passages of an upload the model reads.
     """
     library = home or default_home()
+    uploads = not public or spaces is not None
     assistants = create_server(library)
     security = TransportSecuritySettings(enable_dns_rebinding_protection=False) if public else None
     # Stateless, with plain JSON replies: any worker can answer any request, and
@@ -169,10 +248,45 @@ def create_app(
         stateless_http=True, json_response=True, transport_security=security
     )
 
+    embedders: list[Embedder] = []
+    loading = threading.Lock()
+
+    def embedder() -> Embedder:
+        """One embedding model for the whole server, loaded on first use."""
+        with loading:
+            if not embedders:
+                embedders.append(make_embedder(library))
+            return embedders[0]
+
+    # make_llm is looked up when an import needs it, so it can be replaced in tests.
+    imports = Imports(embedder, lambda: make_llm(), extract_limit=extract_limit)
+
+    def sweep() -> None:
+        """Delete the visitors' libraries whose time is up."""
+        if spaces is None:
+            return
+        for space in spaces.expired():
+            imports.cancel(space.home, then=functools.partial(_forget, space))
+
+    def _forget(space: Space) -> None:
+        assert spaces is not None
+        spaces.delete(space)
+        imports.forget(space.home)
+
+    async def sweeping() -> None:
+        while True:
+            await anyio.to_thread.run_sync(sweep)
+            await anyio.sleep(_SWEEP_SECONDS)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        async with assistants.session_manager.run():
-            yield
+        async with anyio.create_task_group() as tasks:
+            if spaces is not None:
+                tasks.start_soon(sweeping)
+            async with assistants.session_manager.run():
+                yield
+            tasks.cancel_scope.cancel()
+        await anyio.to_thread.run_sync(imports.shutdown)
 
     app = FastAPI(
         title="ChatLore",
@@ -180,26 +294,149 @@ def create_app(
         description="All your AI conversations, one graph, one chat.",
         lifespan=lifespan,
     )
-    embedders: list[Embedder] = []
     allowance = _Allowance(limits) if limits is not None else None
+    if spaces is not None:
+        app.add_middleware(_Visitors, spaces=spaces)
 
     def store() -> GraphStore:
-        return open_store(library)
+        space = _visitor.get()
+        return space.open_store() if space is not None else open_store(library)
+
+    def current_home() -> Path:
+        space = _visitor.get()
+        return space.home if space is not None else library
 
     def embed(text: str, graph: GraphStore) -> list[float] | None:
         """The query's embedding, or None when the library has no embeddings."""
         if graph.count_embeddings() == 0:
             return None
-        if not embedders:
-            embedders.append(make_embedder(library))
         try:
-            return normalise(embedders[0].embed_query(text))
+            return normalise(embedder().embed_query(text))
         except EmbeddingError as error:
             raise HTTPException(503, str(error)) from error
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "version": __version__, "public": public}
+        return {"status": "ok", "version": __version__, "public": public, "uploads": uploads}
+
+    @app.get("/library")
+    def library_info() -> dict[str, Any]:
+        """Whose library this is, whether uploads are taken, and the latest import."""
+        space = _visitor.get()
+        status = imports.status(current_home())
+        return {
+            "own": space is not None or not public,
+            "uploads": uploads,
+            "public": public,
+            "expires_at": space.expires_at.isoformat() if space is not None else None,
+            "keep_hours": spaces.keep.total_seconds() / 3600 if spaces is not None else None,
+            "max_upload_mb": max_upload // 1_000_000,
+            "import": status.as_dict() if status is not None else None,
+        }
+
+    @app.post("/library/import", status_code=202)
+    async def import_upload(request: Request, response: Response) -> dict[str, Any]:
+        """Take an export as the request body and import it in the background.
+
+        Send the file's name in ``X-Filename``. On a public server the upload goes
+        into the visitor's own library, made on the first upload, and a cookie
+        remembers it. ``GET /library`` shows how far the import got.
+        """
+        _changes_allowed(request)
+        if not uploads:
+            raise HTTPException(403, "this server does not take uploads")
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > max_upload:
+            raise HTTPException(413, f"uploads may be up to {max_upload // 1_000_000} MB")
+        space = _visitor.get()
+        created: Space | None = None
+        if public:
+            assert spaces is not None
+            if space is None:
+                token, space = spaces.create()
+                created = space
+                response.set_cookie(
+                    COOKIE,
+                    token,
+                    max_age=int(spaces.keep.total_seconds()),
+                    httponly=True,
+                    samesite="lax",
+                    secure=request.url.scheme == "https",
+                )
+            target, opener = space.home, space.open_store
+        else:
+            target, opener = library, lambda: open_store(library)
+        try:
+            if imports.running(target):
+                raise HTTPException(409, "an import is already running for this library")
+            name = unquote(request.headers.get("x-filename") or "upload")[:200]
+            folder = target / "uploads"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{uuid.uuid4().hex}{upload_suffix(name)}"
+            size = 0
+            try:
+                with path.open("wb") as handle:
+                    async for piece in request.stream():
+                        size += len(piece)
+                        if size > max_upload:
+                            raise HTTPException(
+                                413, f"uploads may be up to {max_upload // 1_000_000} MB"
+                            )
+                        handle.write(piece)
+                if size == 0:
+                    raise HTTPException(400, "the upload is empty")
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
+        except BaseException:
+            if created is not None and spaces is not None:
+                spaces.delete(created)
+            raise
+        return imports.start(target, path, name, opener).as_dict()
+
+    @app.get("/library/export")
+    def export_library(
+        format: Annotated[str, Query(pattern="^(archive|markdown)$")] = "archive",
+    ) -> FileResponse:
+        """The library as a ChatLore archive, or as a zip of Markdown files."""
+        home = current_home()
+        if not Library(home).stats():
+            raise HTTPException(404, "the library is empty")
+        folder = Path(tempfile.mkdtemp(prefix="chatlore-export-"))
+        try:
+            if format == "archive":
+                target = folder / "chatlore-library.zip"
+                with store() as graph:
+                    export_archive(home, target, store=graph)
+            else:
+                export_markdown(Library(home), folder / "markdown")
+                target = Path(
+                    shutil.make_archive(
+                        str(folder / "chatlore-markdown"), "zip", folder / "markdown"
+                    )
+                )
+        except BaseException:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        return FileResponse(
+            target,
+            media_type="application/zip",
+            filename=target.name,
+            background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True),
+        )
+
+    @app.delete("/library")
+    def delete_library(request: Request, response: Response) -> dict[str, str]:
+        """Delete the visitor's own library now, stopping any import into it first."""
+        _changes_allowed(request)
+        space = _visitor.get()
+        if space is None:
+            if not public:
+                raise HTTPException(403, "the server's library cannot be deleted from here")
+            raise HTTPException(404, "you have no library of your own on this server")
+        imports.cancel(space.home, then=lambda: _forget(space))
+        response.delete_cookie(COOKIE)
+        return {"status": "deleted"}
 
     @app.get("/stats")
     def stats() -> dict[str, int]:
