@@ -213,7 +213,18 @@ const Data = {
     const summary = [];
     if (status.file) summary.push(status.file);
     if (status.conversations) summary.push(`${number(status.conversations)} conversations added`);
+    const sources = Object.entries(status.sources || {});
+    if (sources.length) summary.push(sources.map(([source, count]) => `${number(count)} from ${source}`).join(", "));
     if (status.skipped) summary.push(`${number(status.skipped)} records skipped`);
+    const skipped = $("#data-skipped");
+    skipped.hidden = !status.skipped_files;
+    if (status.skipped_files) {
+      $("summary", skipped).textContent = `${number(status.skipped_files)} ${status.skipped_files === 1 ? "file" : "files"} skipped`;
+      const shown = status.skipped_shown || [];
+      $("ul", skipped).innerHTML =
+        shown.map(([path, reason]) => `<li>${esc(path)}: ${esc(reason)}</li>`).join("") +
+        (status.skipped_files > shown.length ? `<li>and ${number(status.skipped_files - shown.length)} more</li>` : "");
+    }
     $("#data-summary").innerHTML = esc(summary.join(" · ")) + (status.error ? `<br><span class="error">${esc(status.error)}</span>` : "");
     const notes = [...(status.notes || [])];
     $("#data-notes").innerHTML = notes.map((note) => `<li>${esc(note)}</li>`).join("");
@@ -240,38 +251,32 @@ const Data = {
     }, 1500);
   },
 
-  upload(file) {
-    if (!file) return;
-    if (file.size > this.info.max_upload_mb * 1_000_000) {
-      $("#data-progress").hidden = false;
-      this.show({ file: file.name, stage: "failed", running: false, error: `The file is larger than ${this.info.max_upload_mb} MB.` });
+  /** Upload files, each ``{file, path}`` with its path in the folder it came from, then import them. */
+  async upload(files) {
+    files = files.filter(({ path }) => !path.split("/").some((part) => SKIPPED_FOLDERS.has(part)));
+    if (!files.length) return;
+    $("#data-progress").hidden = false;
+    const fail = (error) => this.show({ file: label(files), stage: "failed", running: false, error });
+    const total = files.reduce((sum, { file }) => sum + file.size, 0);
+    if (total > this.info.max_upload_mb * 1_000_000) {
+      fail(`That is ${number(Math.ceil(total / 1_000_000))} MB; this server takes up to ${number(this.info.max_upload_mb)} MB at a time.`);
       return;
     }
-    $("#data-progress").hidden = false;
-    const request = new XMLHttpRequest();
-    request.open("POST", "library/import");
-    request.setRequestHeader("X-ChatLore", "1");
-    request.setRequestHeader("X-Filename", encodeURIComponent(file.name));
-    request.setRequestHeader("Content-Type", "application/octet-stream");
-    request.upload.onprogress = (event) => {
-      if (event.lengthComputable) this.show({ file: file.name, running: true }, event.loaded / event.total);
-    };
-    request.onload = () => {
-      let body = {};
-      try {
-        body = JSON.parse(request.responseText);
-      } catch {
-        // an empty or plain-text answer
+    const batch = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    let sent = 0;
+    try {
+      for (const [index, item] of files.entries()) {
+        const shown = files.length > 1 ? `${index + 1} of ${number(files.length)}: ${item.path}` : item.path;
+        await send(`library/files?batch=${batch}`, item.file, item.path, (loaded) =>
+          this.show({ file: shown, running: true }, total ? (sent + loaded) / total : 1),
+        );
+        sent += item.file.size;
       }
-      if (request.status === 202) {
-        this.show(body);
-        this.poll();
-      } else {
-        this.show({ file: file.name, stage: "failed", running: false, error: body.detail || `The server answered ${request.status}.` });
-      }
-    };
-    request.onerror = () => this.show({ file: file.name, stage: "failed", running: false, error: "The upload did not reach the server." });
-    request.send(file);
+      this.show(await send(`library/import?batch=${batch}`, null, label(files)));
+      this.poll();
+    } catch (error) {
+      fail(error.message);
+    }
   },
 
   async remove() {
@@ -285,7 +290,67 @@ $("#data-open").addEventListener("click", () => {
   Data.refresh().catch(() => {});
   $("#data").showModal();
 });
-$("#data-file").addEventListener("change", (event) => Data.upload(event.target.files[0]));
+// Folders nobody means to import, left out before anything is uploaded.
+const SKIPPED_FOLDERS = new Set([".git", "node_modules", "__MACOSX", ".venv", "__pycache__", ".Trash"]);
+
+const label = (files) => (files.length === 1 ? files[0].path : `${number(files.length)} files`);
+
+/** POST a file (or nothing) with the interface's header, reporting upload progress; the answer's JSON. */
+function send(url, file, path, progress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    request.setRequestHeader("X-ChatLore", "1");
+    request.setRequestHeader("X-Filename", encodeURIComponent(path));
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    if (progress) request.upload.onprogress = (event) => event.lengthComputable && progress(event.loaded);
+    request.onload = () => {
+      let body = {};
+      try {
+        body = JSON.parse(request.responseText);
+      } catch {
+        // an empty or plain-text answer
+      }
+      if (request.status >= 200 && request.status < 300) resolve(body);
+      else reject(new Error(body.detail || `The server answered ${request.status}.`));
+    };
+    request.onerror = () => reject(new Error("The upload did not reach the server."));
+    request.send(file);
+  });
+}
+
+/** The files of a drop, folders walked, each with its path; read before the drop event ends. */
+async function dropped(transfer) {
+  const entries = [...transfer.items].map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return [...transfer.files].map((file) => ({ file, path: file.name }));
+  const found = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      found.push({ file: await new Promise((done, failed) => entry.file(done, failed)), path: prefix + entry.name });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      for (;;) {
+        const children = await new Promise((done, failed) => reader.readEntries(done, failed));
+        if (!children.length) break;
+        for (const child of children) await walk(child, `${prefix}${entry.name}/`);
+      }
+    }
+  };
+  for (const entry of entries) await walk(entry, "");
+  return found;
+}
+
+const chosen = (input) => [...input.files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+
+$("#data-file").addEventListener("change", (event) => {
+  Data.upload(chosen(event.target));
+  event.target.value = "";
+});
+$("#data-folder-pick").addEventListener("click", () => $("#data-folder").click());
+$("#data-folder").addEventListener("change", (event) => {
+  Data.upload(chosen(event.target));
+  event.target.value = "";
+});
 $("#data-delete").addEventListener("click", () => Data.remove());
 const drop = $("#data-drop");
 drop.addEventListener("dragover", (event) => {
@@ -296,7 +361,7 @@ drop.addEventListener("dragleave", () => drop.classList.remove("over"));
 drop.addEventListener("drop", (event) => {
   event.preventDefault();
   drop.classList.remove("over");
-  Data.upload(event.dataTransfer.files[0]);
+  dropped(event.dataTransfer).then((files) => Data.upload(files));
 });
 
 // -- conversations ---------------------------------------------------------------------

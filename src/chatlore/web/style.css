@@ -406,6 +406,12 @@ button.danger:hover { border-color: var(--danger); }
 .data-progress p { margin: 0; font-size: 13px; }
 .data-progress ul { margin: 8px 0 0; font-size: 13px; }
 .data-help { margin: 0; font-size: 13px; }
+.data-alt { margin: 8px 0 0; text-align: center; font-size: 13px; }
+button.link { padding: 0; border: 0; background: none; color: var(--accent-text); text-decoration: underline; cursor: pointer; }
+button.link:hover { background: none; color: var(--accent-hover); }
+.data-progress details { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.data-progress details summary { cursor: pointer; }
+.data-progress details li { overflow-wrap: anywhere; }
 
 .chat { display: flex; flex-direction: column; gap: 12px; background: var(--bg); }
 .bubble { max-width: 88%; padding: 10px 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); color: var(--text-2); overflow-wrap: anywhere; }
