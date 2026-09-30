@@ -11,6 +11,9 @@ FROM ghcr.io/astral-sh/uv:0.12-python3.12-trixie-slim
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 
+# bsdtar unpacks 7z and rar uploads; zip and tar need nothing extra.
+RUN apt-get update     && apt-get install -y --no-install-recommends libarchive-tools     && rm -rf /var/lib/apt/lists/*
+
 # Dependencies first, so changing the code does not reinstall them.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project

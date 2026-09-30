@@ -94,6 +94,7 @@ jobs:
 
       - name: Upload an export as a visitor, then download and delete it
         run: |
+          docker exec demo bsdtar --version
           curl -fs -c visitor.txt http://127.0.0.1:7860/library/import \
             -H 'X-ChatLore: 1' -H 'X-Filename: conversations.json' \
             --data-binary @tests/fixtures/claude/conversations.json
