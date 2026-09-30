@@ -139,7 +139,10 @@ def test_an_unreadable_upload_fails_with_a_reason(private: TestClient, tmp_path:
     status = finished(private)
 
     assert status["stage"] == "failed"
-    assert "could not recognise" in status["error"]
+    assert status["error"] == "nothing ChatLore can read was found in the upload"
+    assert status["skipped_shown"] == [
+        ["photo.zip/photo.jpg", "images, audio, video, and programs are not read"]
+    ]
 
 
 def test_a_zip_of_markdown_notes_and_an_archive_are_imported(
@@ -355,3 +358,62 @@ def test_the_archive_downloaded_from_a_visitor_library_imports_anywhere(
     (tmp_path / "mine.zip").write_bytes(download.content)
 
     assert read_manifest(tmp_path / "mine.zip")["conversations"] == 3
+
+
+def send(client: TestClient, batch: str, name: str, content: bytes) -> Any:
+    return client.post(
+        "/library/files",
+        params={"batch": batch},
+        content=content,
+        headers={**CHANGE, "X-Filename": name},
+    )
+
+
+def test_many_files_with_their_folders_import_together(
+    private: TestClient, home: Path, fixtures: Path, tmp_path: Path
+) -> None:
+    from tests import samples
+
+    batch = "0123456789abcdef0123456789abcdef"
+    report = samples.pdf(tmp_path / "report.pdf", "Tide report", ["High tide at 14:05"])
+    sent = [
+        send(
+            private,
+            batch,
+            "Claude%20export/conversations.json",
+            (fixtures / "claude" / "conversations.json").read_bytes(),
+        ),
+        send(private, batch, "Docs/report.pdf", report.read_bytes()),
+        send(private, batch, "../../outside.md", b"# Outside\n\nStill inside."),
+        send(private, batch, "Docs/photo.jpg", b"\x00"),
+    ]
+
+    started = private.post("/library/import", params={"batch": batch}, headers=CHANGE)
+    status = finished(private)
+
+    assert [response.status_code for response in sent] == [200, 200, 200, 200]
+    assert sent[-1].json()["files"] == 4
+    assert started.status_code == 202 and started.json()["file"] == "4 files"
+    assert status["stage"] == "done", status
+    assert status["sources"] == {"claude": 3, "document": 1, "markdown": 1}
+    assert status["skipped_files"] == 1
+    assert status["skipped_shown"] == [
+        ["Docs/photo.jpg", "images, audio, video, and programs are not read"]
+    ]
+    assert not (home / "outside.md").exists()
+    assert list((home / "uploads").iterdir()) == []
+
+
+def test_batches_are_checked(home: Path) -> None:
+    with TestClient(create_app(home, max_upload=10)) as client:
+        bad = send(client, "not-hex", "a.txt", b"x")
+        empty = client.post("/library/import", params={"batch": "f" * 32}, headers=CHANGE)
+        first = send(client, "a" * 32, "a.txt", b"12345")
+        over = send(client, "a" * 32, "b.txt", b"1234567")
+        unmarked = client.post("/library/files", params={"batch": "a" * 32}, content=b"x")
+
+    assert bad.status_code == 422
+    assert empty.status_code == 400
+    assert first.status_code == 200
+    assert over.status_code == 413
+    assert unmarked.status_code == 403

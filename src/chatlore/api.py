@@ -25,6 +25,7 @@ for with the host's key.
 from __future__ import annotations
 
 import functools
+import re
 import shutil
 import tempfile
 import threading
@@ -35,7 +36,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from http.cookies import SimpleCookie
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 from urllib.parse import unquote
 
@@ -54,7 +55,7 @@ from chatlore import __version__
 from chatlore.archive import export_archive, export_markdown
 from chatlore.chat import MAX_SOURCES, ChatLimits, Context, Source, answer, cited, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
-from chatlore.imports import Imports, upload_suffix
+from chatlore.imports import Imports, safe_relative
 from chatlore.library import Library
 from chatlore.llm import LLMError, make_llm
 from chatlore.mcp_server import create_server
@@ -176,6 +177,10 @@ REQUEST_HEADER = "X-ChatLore"
 without the browser first asking this server, which does not allow it, so it
 cannot upload or delete through a visitor's browser."""
 _SWEEP_SECONDS = 600
+MAX_BATCH_FILES = 20_000
+"""Files one upload may hold."""
+_BATCH = re.compile(r"[0-9a-f]{32}")
+_STALE_BATCH_SECONDS = 24 * 3600
 
 # The visitor's own library, when the request carries a token for one.
 _visitor: ContextVar[Space | None] = ContextVar("chatlore_visitor", default=None)
@@ -210,6 +215,24 @@ def _cookie(scope: Scope, name: str) -> str | None:
             if name in cookies:
                 return cookies[name].value
     return None
+
+
+def _forget_stale_batches(uploads: Path) -> None:
+    """Delete batches that were uploaded but never imported, a day on."""
+    if not uploads.exists():
+        return
+    now = time.time()
+    for folder in uploads.iterdir():
+        try:
+            stale = folder.is_dir() and now - folder.stat().st_mtime > _STALE_BATCH_SECONDS
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def _only_file(folder: Path) -> str:
+    return next((path.name for path in folder.rglob("*") if path.is_file()), "1 file")
 
 
 def _changes_allowed(request: Request) -> None:
@@ -334,65 +357,118 @@ def create_app(
             "import": status.as_dict() if status is not None else None,
         }
 
-    @app.post("/library/import", status_code=202)
-    async def import_upload(request: Request, response: Response) -> dict[str, Any]:
-        """Take an export as the request body and import it in the background.
+    staged: dict[tuple[Path, str], list[int]] = {}
+    staging = threading.Lock()
 
-        Send the file's name in ``X-Filename``. On a public server the upload goes
-        into the visitor's own library, made on the first upload, and a cookie
-        remembers it. ``GET /library`` shows how far the import got.
-        """
-        _changes_allowed(request)
+    def _target(request: Request, response: Response) -> tuple[Path, Callable[[], GraphStore]]:
+        """The library uploads go into: the server's, or the visitor's, made on first use."""
         if not uploads:
             raise HTTPException(403, "this server does not take uploads")
-        declared = request.headers.get("content-length")
-        if declared is not None and declared.isdigit() and int(declared) > max_upload:
-            raise HTTPException(413, f"uploads may be up to {max_upload // 1_000_000} MB")
+        if not public:
+            return library, lambda: open_store(library)
+        assert spaces is not None
         space = _visitor.get()
-        created: Space | None = None
-        if public:
-            assert spaces is not None
-            if space is None:
-                token, space = spaces.create()
-                created = space
-                response.set_cookie(
-                    COOKIE,
-                    token,
-                    max_age=int(spaces.keep.total_seconds()),
-                    httponly=True,
-                    samesite="lax",
-                    secure=request.url.scheme == "https",
-                )
-            target, opener = space.home, space.open_store
-        else:
-            target, opener = library, lambda: open_store(library)
+        if space is None:
+            token, space = spaces.create()
+            response.set_cookie(
+                COOKIE,
+                token,
+                max_age=int(spaces.keep.total_seconds()),
+                httponly=True,
+                samesite="lax",
+                secure=request.url.scheme == "https",
+            )
+        return space.home, space.open_store
+
+    async def _receive(request: Request, path: Path, room: int) -> int:
+        """Write the request body to ``path``, refusing more than ``room`` bytes."""
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > room:
+            raise HTTPException(413, f"uploads may be up to {max_upload // 1_000_000} MB in all")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        size = 0
         try:
-            if imports.running(target):
-                raise HTTPException(409, "an import is already running for this library")
-            name = unquote(request.headers.get("x-filename") or "upload")[:200]
-            folder = target / "uploads"
-            folder.mkdir(parents=True, exist_ok=True)
-            path = folder / f"{uuid.uuid4().hex}{upload_suffix(name)}"
-            size = 0
+            with path.open("wb") as handle:
+                async for piece in request.stream():
+                    size += len(piece)
+                    if size > room:
+                        raise HTTPException(
+                            413, f"uploads may be up to {max_upload // 1_000_000} MB in all"
+                        )
+                    handle.write(piece)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return size
+
+    def _batch_folder(target: Path, batch: str) -> Path:
+        if not _BATCH.fullmatch(batch):
+            raise HTTPException(422, "a batch is 32 hexadecimal digits")
+        return target / "uploads" / batch
+
+    @app.post("/library/files")
+    async def upload_file(
+        request: Request, response: Response, batch: Annotated[str, Query()]
+    ) -> dict[str, Any]:
+        """Add one file to a batch of uploads; ``POST /library/import`` imports the batch.
+
+        Send the file as the request body and its path in ``X-Filename``, such as
+        ``Export/conversations.json`` for a file chosen with its folder. ``batch``
+        is any 32 hexadecimal digits the client picks for the whole upload. The
+        files of a batch may be up to the upload limit in all.
+        """
+        _changes_allowed(request)
+        target, _ = _target(request, response)
+        folder = _batch_folder(target, batch)
+        with staging:
+            used = staged.setdefault((target, batch), [0, 0])
+            if used[1] >= MAX_BATCH_FILES:
+                raise HTTPException(413, f"a batch may hold up to {MAX_BATCH_FILES:,} files")
+            used[1] += 1
+        if not folder.exists():
+            _forget_stale_batches(target / "uploads")
+        name = safe_relative(unquote(request.headers.get("x-filename") or "upload"))
+        size = await _receive(request, folder / name, max_upload - used[0])
+        with staging:
+            used[0] += size
+        return {"batch": batch, "files": used[1], "bytes": used[0]}
+
+    @app.post("/library/import", status_code=202)
+    async def import_upload(
+        request: Request, response: Response, batch: Annotated[str | None, Query()] = None
+    ) -> dict[str, Any]:
+        """Import a batch of files sent to ``POST /library/files``, or one file sent here.
+
+        Without ``batch``, the request body is the file and ``X-Filename`` its name.
+        Archives are unpacked, chat exports recognised, and other files read as
+        notes, in the background. On a public server the upload goes into the
+        visitor's own library, made on the first upload, and a cookie remembers it.
+        ``GET /library`` shows how far the import got.
+        """
+        _changes_allowed(request)
+        target, opener = _target(request, response)
+        if imports.running(target):
+            raise HTTPException(409, "an import is already running for this library")
+        if batch is not None:
+            folder = _batch_folder(target, batch)
+            with staging:
+                used = staged.pop((target, batch), [0, 0])
+            if not folder.exists() or not any(folder.iterdir()):
+                raise HTTPException(400, "the batch holds no files")
+            name = f"{used[1]:,} files" if used[1] != 1 else _only_file(folder)
+        else:
+            name = safe_relative(unquote(request.headers.get("x-filename") or "upload"))
+            folder = _batch_folder(target, uuid.uuid4().hex)
+            _forget_stale_batches(target / "uploads")
             try:
-                with path.open("wb") as handle:
-                    async for piece in request.stream():
-                        size += len(piece)
-                        if size > max_upload:
-                            raise HTTPException(
-                                413, f"uploads may be up to {max_upload // 1_000_000} MB"
-                            )
-                        handle.write(piece)
+                size = await _receive(request, folder / name, max_upload)
                 if size == 0:
                     raise HTTPException(400, "the upload is empty")
             except BaseException:
-                path.unlink(missing_ok=True)
+                shutil.rmtree(folder, ignore_errors=True)
                 raise
-        except BaseException:
-            if created is not None and spaces is not None:
-                spaces.delete(created)
-            raise
-        return imports.start(target, path, name, opener).as_dict()
+            name = PurePosixPath(name).name
+        return imports.start(target, folder, name, opener).as_dict()
 
     @app.get("/library/export")
     def export_library(
