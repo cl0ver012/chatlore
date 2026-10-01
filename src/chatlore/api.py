@@ -217,6 +217,21 @@ def _cookie(scope: Scope, name: str) -> str | None:
     return None
 
 
+def _library_cookie(request: Request, token: str, max_age: int) -> str:
+    """The ``Set-Cookie`` value that gives the visitor's browser its library token.
+
+    Over HTTPS the cookie is also sent inside another site's frame, as when a
+    Hugging Face Space shows the demo on its page, and ``Partitioned`` keeps it
+    apart for each site that frames it. Every change still needs the
+    ``X-ChatLore`` header, which another site cannot send.
+    """
+    if request.url.scheme == "https":
+        attributes = "SameSite=None; Secure; Partitioned"
+    else:
+        attributes = "SameSite=Lax"
+    return f"{COOKIE}={token}; Max-Age={max_age}; Path=/; HttpOnly; {attributes}"
+
+
 def _forget_stale_batches(uploads: Path) -> None:
     """Delete batches that were uploaded but never imported, a day on."""
     if not uploads.exists():
@@ -370,14 +385,8 @@ def create_app(
         space = _visitor.get()
         if space is None:
             token, space = spaces.create()
-            response.set_cookie(
-                COOKIE,
-                token,
-                max_age=int(spaces.keep.total_seconds()),
-                httponly=True,
-                samesite="lax",
-                secure=request.url.scheme == "https",
-            )
+            max_age = int(spaces.keep.total_seconds())
+            response.headers.append("set-cookie", _library_cookie(request, token, max_age))
         return space.home, space.open_store
 
     async def _receive(request: Request, path: Path, room: int) -> int:
@@ -511,7 +520,8 @@ def create_app(
                 raise HTTPException(403, "the server's library cannot be deleted from here")
             raise HTTPException(404, "you have no library of your own on this server")
         imports.cancel(space.home, then=lambda: _forget(space))
-        response.delete_cookie(COOKIE)
+        # Removed with the same attributes, or a partitioned cookie would stay.
+        response.headers.append("set-cookie", _library_cookie(request, '""', 0))
         return {"status": "deleted"}
 
     @app.get("/stats")

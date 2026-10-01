@@ -72,7 +72,9 @@ chatlore --home ~/.chatlore-demo serve --public --uploads --host 0.0.0.0 --port 
   own, and everything they then see, search, and ask is theirs alone. Everyone
   else still sees the server's library.
 - The library is tied to the visitor's browser by a random token in a cookie
-  (HttpOnly, SameSite=Lax, and Secure over HTTPS). Its folder is named after a
+  (HttpOnly; over HTTPS also Secure, SameSite=None, and Partitioned, so it works
+  when another site shows the demo in a frame, as a Hugging Face Space's page
+  does, kept apart for each such site). Its folder is named after a
   hash of the token, so the server's files do not give the token away.
 - It is deleted after 24 hours, or `--keep-hours`, and at once when the visitor
   chooses **Delete my library**; an import still running is stopped first. The
@@ -99,6 +101,32 @@ visitor's cookie.
 
 Any service that builds and runs a Dockerfile from a Git repository works, and
 gives the container an HTTPS address. ChatGPT only connects to HTTPS.
+
+### Hugging Face Spaces
+
+The repository deploys the demo to a [Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker),
+which is free on the basic CPU hardware (2 vCPUs, 16 GB of memory), with the
+workflow in `.github/workflows/deploy.yml`:
+
+1. Create a Hugging Face [access token](https://huggingface.co/settings/tokens)
+   with write access, and add it to the GitHub repository as the secret
+   `HF_TOKEN` (Settings → Secrets and variables → Actions).
+2. Add the repository variable `HF_SPACE` with the Space's name, such as
+   `your-name/chatlore`, on the same page.
+3. Run the **Deploy** workflow from the Actions tab. It creates the Space on the
+   first run and uploads the Dockerfile with what it builds; the Space then
+   builds the image and starts it, which takes a few minutes. Every version
+   tagged afterwards is deployed the same way.
+4. In the Space's settings, add the secret `OPENROUTER_API_KEY` for asking, with
+   a credit limit on the key. The Space restarts with it.
+
+The demo is then at `https://huggingface.co/spaces/<owner>/<name>`, and on its
+own at `https://<owner>-<name>.hf.space`, which is the address to give
+assistants: `https://<owner>-<name>.hf.space/mcp`.
+
+A free Space sleeps after two days without visitors and wakes when someone
+opens it. Its disk is emptied whenever it restarts, which also deletes
+visitors' libraries early; the demo library is in the image and comes back.
 
 CI builds the image on every pull request, starts it, and checks the web
 interface, the API, and a tool call over MCP. It then uploads an export as a
