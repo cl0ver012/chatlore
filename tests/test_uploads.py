@@ -255,6 +255,25 @@ def test_a_visitor_can_delete_their_library(
     assert public.get("/library").json()["own"] is False
 
 
+def test_over_https_the_library_also_works_in_another_sites_frame(
+    home: Path, spaces: Spaces, fixtures: Path
+) -> None:
+    app = create_app(home, public=True, spaces=spaces)
+    with TestClient(app, base_url="https://demo.example") as client:
+        started = upload(client, fixtures / "claude" / "conversations.json")
+        finished(client)
+        own = client.get("/stats").json()
+        deleted = client.delete("/library", headers=CHANGE)
+        after = client.get("/library").json()
+
+    given = started.headers["set-cookie"]
+    removed = deleted.headers["set-cookie"]
+    assert all(part in given for part in ("SameSite=None", "Secure", "Partitioned", "HttpOnly"))
+    assert own["conversations"] == 3
+    assert "Max-Age=0" in removed and "Partitioned" in removed
+    assert after["own"] is False
+
+
 def test_the_servers_own_library_cannot_be_deleted(private: TestClient) -> None:
     assert private.delete("/library", headers=CHANGE).status_code == 403
 

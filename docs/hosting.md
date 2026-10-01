@@ -72,7 +72,9 @@ chatlore --home ~/.chatlore-demo serve --public --uploads --host 0.0.0.0 --port 
   own, and everything they then see, search, and ask is theirs alone. Everyone
   else still sees the server's library.
 - The library is tied to the visitor's browser by a random token in a cookie
-  (HttpOnly, SameSite=Lax, and Secure over HTTPS). Its folder is named after a
+  (HttpOnly; over HTTPS also Secure, SameSite=None, and Partitioned, so it works
+  when another site shows the demo in a frame, as a Hugging Face Space's page
+  does, kept apart for each such site). Its folder is named after a
   hash of the token, so the server's files do not give the token away.
 - It is deleted after 24 hours, or `--keep-hours`, and at once when the visitor
   chooses **Delete my library**; an import still running is stopped first. The

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Visitors' own libraries work when the demo is shown in another site's frame, as on a Hugging
+  Face Space's page: over HTTPS the library cookie is `SameSite=None`, `Secure`, and
+  `Partitioned`. It used to be dropped there, so every upload started a new, empty library.
+
 ## [0.2.0] - 2026-09-30
 
 ### Added
