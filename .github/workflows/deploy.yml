@@ -1,0 +1,70 @@
+name: Deploy
+
+# Deploys the hosted demo to a Hugging Face Space, which builds the Dockerfile
+# and runs it. Runs for every released version and on request. Needs the
+# repository variable HF_SPACE (owner/name) and the secret HF_TOKEN, a token
+# with write access; the Space is created on the first run. Steps in
+# docs/hosting.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  space:
+    name: Hugging Face Space
+    if: vars.HF_SPACE != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: demo
+      url: https://huggingface.co/spaces/${{ vars.HF_SPACE }}
+    env:
+      HF_SPACE: ${{ vars.HF_SPACE }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Gather what the Space builds
+        run: |
+          mkdir space
+          cp -r Dockerfile .dockerignore pyproject.toml uv.lock LICENSE src space/
+          # The Space reads its settings from the front matter of its README.
+          {
+            cat <<'EOF'
+          ---
+          title: ChatLore
+          emoji: 🕸️
+          colorFrom: indigo
+          colorTo: blue
+          sdk: docker
+          app_port: 7860
+          license: mit
+          short_description: All your AI conversations, one graph, one chat.
+          ---
+
+          EOF
+            cat README.md
+          } > space/README.md
+
+      - name: Create the Space
+        run: >
+          uvx --from "huggingface_hub>=1.32,<2" hf repos create "$HF_SPACE"
+          --type space --space-sdk docker --public --exist-ok
+
+      - name: Upload
+        run: >
+          uvx --from "huggingface_hub>=1.32,<2" hf upload "$HF_SPACE" space .
+          --type space --delete "src/*"
+          --commit-message "Deploy ${GITHUB_REF_NAME} (${GITHUB_SHA::7})"

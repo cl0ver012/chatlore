@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A Deploy workflow that puts the hosted demo on a Hugging Face Space, creating it on the first
+  run, for every released version and on request. Steps in `docs/hosting.md`.
+
 ### Fixed
 
 - Visitors' own libraries work when the demo is shown in another site's frame, as on a Hugging

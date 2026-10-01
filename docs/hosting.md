@@ -102,6 +102,32 @@ visitor's cookie.
 Any service that builds and runs a Dockerfile from a Git repository works, and
 gives the container an HTTPS address. ChatGPT only connects to HTTPS.
 
+### Hugging Face Spaces
+
+The repository deploys the demo to a [Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker),
+which is free on the basic CPU hardware (2 vCPUs, 16 GB of memory), with the
+workflow in `.github/workflows/deploy.yml`:
+
+1. Create a Hugging Face [access token](https://huggingface.co/settings/tokens)
+   with write access, and add it to the GitHub repository as the secret
+   `HF_TOKEN` (Settings → Secrets and variables → Actions).
+2. Add the repository variable `HF_SPACE` with the Space's name, such as
+   `your-name/chatlore`, on the same page.
+3. Run the **Deploy** workflow from the Actions tab. It creates the Space on the
+   first run and uploads the Dockerfile with what it builds; the Space then
+   builds the image and starts it, which takes a few minutes. Every version
+   tagged afterwards is deployed the same way.
+4. In the Space's settings, add the secret `OPENROUTER_API_KEY` for asking, with
+   a credit limit on the key. The Space restarts with it.
+
+The demo is then at `https://huggingface.co/spaces/<owner>/<name>`, and on its
+own at `https://<owner>-<name>.hf.space`, which is the address to give
+assistants: `https://<owner>-<name>.hf.space/mcp`.
+
+A free Space sleeps after two days without visitors and wakes when someone
+opens it. Its disk is emptied whenever it restarts, which also deletes
+visitors' libraries early; the demo library is in the image and comes back.
+
 CI builds the image on every pull request, starts it, and checks the web
 interface, the API, and a tool call over MCP. It then uploads an export as a
 visitor, waits for the import, checks that only that visitor sees it, downloads
