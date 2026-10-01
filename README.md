@@ -100,7 +100,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M6 | Web UI: conversations, graph explorer, chat | basic version done |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done; ChatGPT through /mcp once the demo is online |
 | M8 | Easy to try: PyPI package, demo library, export and import | done, v0.1.0 |
-| M9 | Hosted demo | public mode, MCP over HTTP, and Docker image done; deployment next |
+| M9 | Hosted demo | public mode, MCP over HTTP, Docker image, and Hugging Face Space deployment done; going live next |
 | M10 | FalkorDB backend | done |
 | M11 | Your own data in the web interface: upload, export, private visitor libraries | done |
 | M12 | Import anything: documents, email, data files, folders, and archives | done |
