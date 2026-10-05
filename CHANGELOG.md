@@ -9,8 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Facts with provenance: `chatlore extract` also finds what each passage establishes, such as
+  decisions, preferences, plans, settings, and findings, as one sentence about an entity. A
+  fact links to its entity, to a second entity it involves, and with `ASSERTED_IN` to every
+  message that said it. `chatlore facts [words]` lists them with where they were said,
+  `chatlore entity` shows an entity's facts, `GET /facts` and `GET /entities/{id}` return
+  them, the web interface shows them in the entity drawer with a link to the message, the MCP
+  server has a `facts` tool, and chat gets the facts about the entities a question names.
+  Guide in `docs/extraction.md`.
+- The demo library has facts.
 - A Deploy workflow that puts the hosted demo on a Hugging Face Space, creating it on the first
   run, for every released version and on request. Steps in `docs/hosting.md`.
+
+### Changed
+
+- The extraction prompt is version 2, so the next `chatlore extract` reads every chunk once
+  more to find its facts. Until a chunk is read again, its earlier answer still gives its
+  entities and relationships, so upgrading never empties the graph.
 
 ### Fixed
 

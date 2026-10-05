@@ -62,7 +62,8 @@ the hundred most mentioned entities that have relationships. From there:
 - type a name into **Find an entity** to show it with its closest neighbours;
 - choose a topic from the list, or click one in the legend, to show its entities;
 - click an entity to open a drawer with its summary, other names, topic,
-  relationships, and the conversations it came up in;
+  relationships, facts, and the conversations it came up in; each fact links to
+  the message that said it;
 - **Add neighbours** adds an entity's related entities to what is drawn, and
   **Focus** redraws the graph around it;
 - drag entities or the background, scroll to zoom, and double-click or use the
