@@ -1,8 +1,9 @@
 # Language models
 
 Importing and searching never call a language model. Extraction and chat do,
-and they talk to any OpenAI-compatible chat API. The model runs wherever you
-point it: a hosted router or a server on your own machine.
+and they talk to any OpenAI-compatible chat API, or to Anthropic's or Google's
+own API. The model runs wherever you point it: a hosted router, a model
+provider, or a server on your own machine.
 
 ```bash
 chatlore doctor   # shows the configured model, reasoning, and whether a key is set
@@ -38,6 +39,43 @@ export CHATLORE_LLM_BASE_URL=http://localhost:11434/v1   # Ollama
 export CHATLORE_LLM_MODEL=qwen3:8b
 ```
 
+## Anthropic and Gemini
+
+Claude and Gemini models can also be used through their makers' own APIs, with
+the official SDKs, which install as extras:
+
+```bash
+uv tool install 'chatlore[anthropic]'      # or: pip install 'chatlore[anthropic]'
+export CHATLORE_LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+```bash
+uv tool install 'chatlore[gemini]'
+export CHATLORE_LLM_PROVIDER=gemini
+export GEMINI_API_KEY=...                   # or GOOGLE_API_KEY
+```
+
+| Provider | Default model | Key |
+|---|---|---|
+| `anthropic` | `claude-opus-5-5` | `ANTHROPIC_API_KEY` |
+| `gemini` | `gemini-3.5-flash-lite` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
+
+`CHATLORE_LLM_MODEL` picks another model, such as `claude-sonnet-5-5`,
+`claude-haiku-4-5`, or `gemini-3.8-flash`. Each key is only sent to its own
+provider. A model that declines a passage, or stops at the token limit, is
+treated like an empty answer: extraction skips that batch and asks again next
+time. Claude Opus 5.5, Opus 5, Sonnet 5.5, and Fable 5.1 ask the API to rerun a
+declined request on its recommended fallback model.
+
+Current Claude and Gemini models always think a little, so `off` asks for the
+least thinking they allow: effort `low` for Claude, thinking level `minimal` for
+Gemini. `low`, `medium`, and `high` are passed on as they are. Claude Haiku 4.5
+takes no effort setting; use it with `CHATLORE_LLM_REASONING=default`.
+
+These clients are new and were tested against recorded answers, not measured on
+a real export like the models below.
+
 ## Reasoning
 
 Many models think before they answer. Extraction asks thousands of short,
@@ -66,11 +104,14 @@ For a richer graph at about four times the cost, set
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CHATLORE_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | Where the OpenAI-compatible API lives |
-| `CHATLORE_LLM_MODEL` | `deepseek/deepseek-v4-flash` | Model id as that server names it |
+| `CHATLORE_LLM_PROVIDER` | `openai` | `openai` for any OpenAI-compatible API, `anthropic`, or `gemini` |
+| `CHATLORE_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | Where the API lives; each provider has its own default |
+| `CHATLORE_LLM_MODEL` | `deepseek/deepseek-v4-flash` | Model id as that server names it; each provider has its own default |
 | `CHATLORE_LLM_REASONING` | `off` | `off`, `low`, `medium`, `high`, or `default` |
 | `CHATLORE_LLM_API_KEY` | none | Key for the server; wins over `OPENROUTER_API_KEY` |
 | `OPENROUTER_API_KEY` | none | Used only when the base URL is OpenRouter |
+| `ANTHROPIC_API_KEY` | none | Used only with `CHATLORE_LLM_PROVIDER=anthropic` |
+| `GEMINI_API_KEY`, `GOOGLE_API_KEY` | none | Used only with `CHATLORE_LLM_PROVIDER=gemini` |
 
 `OPENROUTER_API_KEY` is never sent to any other server, so switching the base
 URL to a local or third-party server cannot leak it. Use `CHATLORE_LLM_API_KEY`

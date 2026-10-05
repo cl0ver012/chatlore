@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Anthropic and Gemini as model providers, through their official SDKs:
+  `CHATLORE_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`, or `gemini` with
+  `GEMINI_API_KEY`, after `pip install 'chatlore[anthropic]'` or `'chatlore[gemini]'`.
+  Extraction and chat work as with any OpenAI-compatible API, reasoning maps onto each
+  provider's own setting, and declined or cut-off answers are asked again next run.
+  `chatlore doctor` names the key each provider needs. Guide in `docs/models.md`.
 - A Deploy workflow that puts the hosted demo on a Hugging Face Space, creating it on the first
   run, for every released version and on request. Steps in `docs/hosting.md`.
 
