@@ -1034,6 +1034,16 @@ const Graph = {
           .slice(0, 12)
           .map((r) => `<li><button type="button" data-focus="${esc(r.id)}"><strong>${esc(r.name)}</strong> · ${esc(r.relationship || "")}</button></li>`)
           .join("")}</ul>` : ""}
+        ${e.facts.length ? `<h4>Facts</h4><ul class="facts">${e.facts
+          .slice(0, 10)
+          .map((f) => {
+            const said = f.sources[0];
+            const where = said
+              ? `<button type="button" data-conversation="${esc(said.conversation_id)}" data-message="${esc(said.message_id)}">${esc(said.title || "Untitled conversation")}${said.created_at ? ` · ${esc(said.created_at.slice(0, 10))}` : ""}</button>`
+              : "";
+            return `<li><p>${esc(f.statement)}</p>${where}</li>`;
+          })
+          .join("")}</ul>` : ""}
         ${e.conversations.length ? `<h4>Mentioned in</h4><div class="mentions">${e.conversations
           .slice(0, 10)
           .map((c) => `<button type="button" data-conversation="${esc(c.id)}">${esc(c.title || "Untitled conversation")}</button>`)
