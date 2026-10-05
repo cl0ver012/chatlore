@@ -31,13 +31,14 @@ from chatlore.extraction import (
     duplicate_messages,
     entity_key,
     extraction_messages,
+    fact_key,
     pair_key,
     parse_duplicates,
     parse_extractions,
     parse_summaries,
     summary_messages,
 )
-from chatlore.ids import content_hash, entity_id, topic_id
+from chatlore.ids import content_hash, entity_id, fact_id, topic_id
 from chatlore.llm import LLM, ChatMessage, Completion, LLMAnswerError
 from chatlore.models import Conversation
 from chatlore.store import Edge, EdgeType, GraphStore, Label, Node
@@ -285,6 +286,7 @@ class EntityReport:
     entities: int = 0
     relationships: int = 0
     mentions: int = 0
+    facts: int = 0
 
 
 @dataclass(slots=True)
@@ -300,6 +302,29 @@ class _RelationshipDraft:
     descriptions: dict[str, None] = field(default_factory=dict)
     weight: int = 0
     count: int = 0
+
+
+@dataclass(slots=True)
+class _FactDraft:
+    statements: Counter[str] = field(default_factory=Counter)
+    objects: Counter[str] = field(default_factory=Counter)
+    sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Where it was said, by message id."""
+
+
+FACT_SOURCES = 20
+"""Messages kept on a fact for showing where it was said; the graph links all of them."""
+
+
+def _fact_source(chunk: Node) -> dict[str, Any]:
+    return {
+        "message_id": chunk.props.get("message_id"),
+        "conversation_id": chunk.props.get("conversation_id"),
+        "title": chunk.props.get("title"),
+        "source": chunk.props.get("source"),
+        "role": chunk.props.get("role"),
+        "created_at": chunk.props.get("created_at"),
+    }
 
 
 def _to_summarise(node: Node) -> EntityToSummarise:
@@ -333,13 +358,19 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
     description is kept. An entity described once uses that description as its
     summary; one described more often gets its cached summary, or ``None`` until
     ``sync_summaries`` writes one. Every chunk links to the entities it mentions.
+
+    Facts are rebuilt the same way. One statement about one entity is one fact,
+    however many chunks state it; it links to its subject, to the entity it
+    involves if any, and with ``ASSERTED_IN`` to every message that said it.
+    Chunks read with an earlier prompt still give their entities, without facts.
     """
     chunks = sorted(store.find_nodes(Label.CHUNK), key=lambda node: node.id)
     hashes = {node.id: text_hash(str(node.props.get("text", ""))) for node in chunks}
-    known = cache.get_many(model, sorted(set(hashes.values())))
+    known = cache.get_many(model, sorted(set(hashes.values())), earlier=True)
 
     entities: dict[str, _EntityDraft] = {}
     relationships: dict[tuple[str, str], _RelationshipDraft] = {}
+    facts: dict[tuple[str, str], _FactDraft] = {}
     for chunk in chunks:
         extraction = known.get(hashes[chunk.id])
         if extraction is None:
@@ -360,6 +391,13 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
                 link.descriptions[relationship.description] = None
             link.weight += relationship.strength
             link.count += 1
+        for fact in extraction.facts:
+            subject = entity_key(fact.subject)
+            fact_draft = facts.setdefault((subject, fact_key(fact.statement)), _FactDraft())
+            fact_draft.statements[fact.statement] += 1
+            if fact.object and entity_key(fact.object) != subject:
+                fact_draft.objects[entity_key(fact.object)] += 1
+            fact_draft.sources.setdefault(str(chunk.props.get("message_id")), _fact_source(chunk))
 
     nodes = [
         Node(
@@ -400,13 +438,52 @@ def sync_entities(store: GraphStore, cache: ExtractionCache, model: str) -> Enti
         )
         for (source, target), link in sorted(relationships.items())
     ]
+    names = {node.id: str(node.props["name"]) for node in nodes}
+    fact_nodes: list[Node] = []
+    fact_edges: list[Edge] = []
+    for (subject, statement_key), fact_draft in sorted(facts.items()):
+        node_id = fact_id(subject, statement_key)
+        statement = fact_draft.statements.most_common(1)[0][0]
+        other = fact_draft.objects.most_common(1)[0][0] if fact_draft.objects else None
+        sources = sorted(
+            fact_draft.sources.values(), key=lambda source: str(source["created_at"] or "")
+        )
+        subject_name = names[entity_id(subject)]
+        fact_nodes.append(
+            Node(
+                node_id,
+                Label.FACT,
+                {
+                    "statement": statement,
+                    "subject": subject_name,
+                    "object": names[entity_id(other)] if other else None,
+                    "sources": sources[-FACT_SOURCES:],
+                    "said": len(sources),
+                    "first_said": sources[0]["created_at"],
+                    "last_said": sources[-1]["created_at"],
+                    "model": model,
+                    "title": subject_name,
+                    "text": statement,
+                },
+            )
+        )
+        fact_edges.append(Edge(node_id, EdgeType.SUBJECT, entity_id(subject)))
+        if other:
+            fact_edges.append(Edge(node_id, EdgeType.OBJECT, entity_id(other)))
+        fact_edges += [
+            Edge(node_id, EdgeType.ASSERTED_IN, message_id)
+            for message_id in sorted(fact_draft.sources)
+        ]
     with store.transaction():
-        # Deleting the old entities removes their MENTIONS and RELATED_TO edges too.
+        # Deleting the old entities and facts removes their edges too.
+        store.delete_nodes(node.id for node in store.find_nodes(Label.FACT))
         store.delete_nodes(node.id for node in store.find_nodes(Label.ENTITY))
         store.upsert_nodes(nodes)
         store.upsert_edges(mentions)
         store.upsert_edges(links)
-    return EntityReport(len(nodes), len(links), len(mentions))
+        store.upsert_nodes(fact_nodes)
+        store.upsert_edges(fact_edges)
+    return EntityReport(len(nodes), len(links), len(mentions), len(fact_nodes))
 
 
 @dataclass(slots=True)

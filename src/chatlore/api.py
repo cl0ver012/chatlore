@@ -55,6 +55,7 @@ from chatlore import __version__
 from chatlore.archive import export_archive, export_markdown
 from chatlore.chat import MAX_SOURCES, ChatLimits, Context, Source, answer, cited, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
+from chatlore.facts import facts_about, find_facts
 from chatlore.imports import Imports, safe_relative
 from chatlore.library import Library
 from chatlore.llm import LLMError, make_llm
@@ -535,6 +536,7 @@ def create_app(
                 "embeddings": graph.count_embeddings(),
                 "entities": counts[Label.ENTITY],
                 "topics": counts[Label.TOPIC],
+                "facts": counts[Label.FACT],
             }
 
     @app.get("/search")
@@ -655,6 +657,7 @@ def create_app(
                 for _, chunk in chunks
             }
             topics = graph.neighbors(entity_id, [EdgeType.IN_TOPIC])
+            known = facts_about(graph, [entity_id])[entity_id]
             return {
                 **_entity(node),
                 "descriptions": node.props.get("descriptions", []),
@@ -671,11 +674,20 @@ def create_app(
                     }
                     for edge, other in related[:20]
                 ],
+                "facts": [item.as_dict() for item in known[:50]],
                 "conversations": [
                     {"id": conversation_id, "title": title}
                     for conversation_id, title in titles.items()
                 ],
             }
+
+    @app.get("/facts")
+    def facts(
+        q: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 50
+    ) -> list[dict[str, Any]]:
+        """Facts whose statement or subject matches ``q``, or the newest facts."""
+        with store() as graph:
+            return [item.as_dict() for item in find_facts(graph, q, limit)]
 
     @app.get("/topics")
     def topics(
