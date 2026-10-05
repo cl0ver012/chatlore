@@ -11,7 +11,8 @@ Gemini exports, notes, documents (PDF, Word, Excel, and more), email, and
 archives of any of them land in a local library and a SQLite graph store you can
 search from the terminal by words, by meaning, or both. A language model turns
 them into a knowledge graph of entities, relationships, and topics that you can
-browse and search, and you can ask questions and get answers with sources, in
+browse and search, with facts that each lead back to the message that said
+them, and you can ask questions and get answers with sources, in
 the terminal, over a REST API, or in a web interface with a graph explorer. AI
 assistants such as Claude and Cursor can search it too, through an MCP server.
 A library moves between machines as one archive file. The roadmap below shows
@@ -43,6 +44,7 @@ chatlore search "slow postgres query" --hybrid       # words and meaning togethe
 chatlore extract --limit 50                          # entities, needs a model key
 chatlore topics                                      # what the conversations are about
 chatlore entity "postgres"                           # one entity and where it came up
+chatlore facts "backups"                             # decisions and findings, with sources
 chatlore ask "why was my query slow?"                # an answer with sources
 chatlore serve                                       # web UI and API on http://127.0.0.1:8000
 chatlore mcp                                         # tools for Claude, Cursor, and other MCP clients
@@ -95,7 +97,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M1 | Core data model and embedded SQLite graph store | done |
 | M2 | Importers: ChatGPT, Claude, Gemini, Markdown, notes | done |
 | M3 | Chunking, embeddings, hybrid search | done |
-| M4 | Entity, topic, and fact extraction with provenance | entities and topics done; facts later |
+| M4 | Entity, topic, and fact extraction with provenance | done |
 | M5 | REST API with streaming chat | done |
 | M6 | Web UI: conversations, graph explorer, chat | basic version done |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done; ChatGPT through /mcp once the demo is online |

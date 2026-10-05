@@ -6,14 +6,17 @@ chatlore extract --limit 50      # try the model on a few chunks
 chatlore extract                 # read the rest; safe to repeat and to interrupt
 chatlore topics                  # what the conversations are about
 chatlore entity "Postgres"       # one entity, its links, and where it came up
+chatlore facts backups           # what was decided or found, and where
 ```
 
 `chatlore extract` builds a graph from your conversations with the configured
 language model (see [models.md](models.md)), in four steps:
 
-1. **Entities and relationships.** Each chunk is read, and the model names the
-   entities it mentions and how they relate. Every chunk links to the entities
-   it mentions, so anything in the graph leads back to the messages it came from.
+1. **Entities, relationships, and facts.** Each chunk is read, and the model
+   names the entities it mentions, how they relate, and the facts it states
+   about them. Every chunk links to the entities it mentions, and every fact to
+   the messages that said it, so anything in the graph leads back to where it
+   came from.
 2. **Summaries.** An entity mentioned in several places gets one short summary.
 3. **Duplicates.** Names that may mean the same thing, such as "AWS" and "Amazon
    Web Services", are checked by the model and linked when they do.
@@ -72,6 +75,36 @@ and underscores between words, trailing punctuation, and a plural "s" on the
 last word: "Drive D:" and "drive d", or "Challenge fees" and "Challenge fee".
 Punctuation inside a name counts, so "C++", "C#", and "C" stay apart.
 
+## Facts
+
+A fact is something a passage establishes that is worth remembering later: a
+decision, a preference, a plan, a setting or number, a finding, or a problem and
+its fix. General knowledge and options that were only considered are left out.
+Each fact is one self-contained sentence about one entity, such as "The shop
+backend moved from MySQL to PostgreSQL to get JSON columns.", and may involve a
+second entity.
+
+In the graph a fact links to its entity (`SUBJECT`), to the second entity if any
+(`OBJECT`), and with `ASSERTED_IN` to every message that said it. The same
+sentence said in several places, ignoring case, spacing, and trailing
+punctuation, is one fact with all of those messages, and it is gone once none
+of them is left. The latest 20 are kept on the fact with their conversation,
+title, and date, for showing where it was said.
+
+`chatlore facts` lists facts, newest first, and `chatlore facts <words>` finds
+those that mention the words; each shows the conversation and date it was last
+said in. `chatlore entity <name>` shows the facts about an entity, the web
+interface shows them in the entity drawer with a link to the message, the MCP
+server has a `facts` tool, and chat gets the facts about the entities a
+question names.
+
+On the demo library of 32 conversations, 86 chunks gave 118 facts.
+
+Facts came with ChatLore 0.3. A library extracted before that keeps its
+entities, relationships, and topics, and the next `chatlore extract` reads every
+chunk once more to find its facts, at about the cost of the first run;
+`--limit` spreads that over several runs.
+
 ## Summaries
 
 Every distinct description of an entity is kept. An entity described once uses
@@ -115,8 +148,8 @@ single entities, too small to be topics. The next largest topics had 40, 38, and
 
 `chatlore topics` lists topics, largest first, and `chatlore topics <words>`
 finds those whose report mentions the words. `chatlore entity <name>` shows an
-entity's summary, its other names, its topic, its strongest relationships, and
-the conversations that mention it.
+entity's summary, its other names, its topic, its strongest relationships, the
+facts about it, and the conversations that mention it.
 
 ## Search
 

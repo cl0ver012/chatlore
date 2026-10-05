@@ -38,8 +38,8 @@ Two ranked lists of chunks are merged with reciprocal rank fusion:
   With embeddings, each entity offers the chunks among its mentions that are
   nearest the question; without them, its most recent ones.
 
-The model also gets the summaries of the named entities and the reports of their
-topics as background. It is told to answer only from the numbered passages, to
+The model also gets the summaries of the named entities, the newest facts about
+them with the date each was said, and the reports of their topics as background. It is told to answer only from the numbered passages, to
 cite every claim, to prefer the most recent passage when they disagree, and to
 say so when the passages do not hold the answer. When nothing matches at all,
 the model is not called.
@@ -54,12 +54,13 @@ that and prints a warning. `--port` sets the port, 8000 by default.
 | Endpoint | What it returns |
 |---|---|
 | `GET /health` | `{"status": "ok", "version": ...}` |
-| `GET /stats` | Counts of conversations, messages, chunks, embeddings, entities, and topics |
+| `GET /stats` | Counts of conversations, messages, chunks, embeddings, entities, topics, and facts |
 | `GET /search?q=...` | Matching messages; `mode=hybrid` (default) or `words`, `limit`, repeatable `source` |
 | `GET /conversations` | Conversations, newest first; `source`, `limit`, `offset` |
 | `GET /conversations/{id}` | One conversation with its messages |
 | `GET /entities?q=...` | Entities matching the words, or the most mentioned ones |
-| `GET /entities/{id}` | An entity with its descriptions, other names, topic, relationships, and conversations |
+| `GET /entities/{id}` | An entity with its descriptions, other names, topic, relationships, facts, and conversations |
+| `GET /facts?q=...` | Facts matching the words, or the newest facts, each with the messages that said it; `limit` |
 | `GET /topics?q=...` | Topics matching the words, or all topics, largest first |
 | `GET /topics/{id}` | A topic's report and its entities |
 | `GET /graph` | Entities, the links among them, and their topics, for drawing; `entity`, `topic`, `limit` |

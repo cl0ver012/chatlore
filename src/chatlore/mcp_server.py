@@ -26,6 +26,7 @@ from chatlore import __version__
 from chatlore.chat import MAX_SOURCES, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
 from chatlore.extraction import entity_key
+from chatlore.facts import Fact, facts_about, find_facts
 from chatlore.models import Message
 from chatlore.paths import default_home
 from chatlore.search import hybrid_search
@@ -43,7 +44,8 @@ or worked out before, or asks what they know about something.
 Start with ask_context for a question, or search to find messages. Answer from what
 the tools return, cite the conversation's title and date, and say so when the
 conversations do not hold the answer. Use conversation to read more around a
-passage, and entity and topics to see how things connect."""
+passage, entity and topics to see how things connect, and facts for what the user
+decided, prefers, or found out, each with the conversation it came from."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 
@@ -174,8 +176,8 @@ def create_server(home: Path | None = None) -> MCPServer:
         name: Annotated[str, Field(min_length=1, description="The entity's name or id.")],
     ) -> str:
         """What the knowledge graph knows about a person, project, tool, place, or idea:
-        its summary, other names, topic, related entities, and the conversations it
-        came up in."""
+        its summary, other names, topic, related entities, facts about it with where
+        each was said, and the conversations it came up in."""
         with open_store(library) as graph:
             node = _find_entity(graph, name)
             if node is None:
@@ -201,6 +203,10 @@ def create_server(home: Path | None = None) -> MCPServer:
                 for edge, other in related[:15]:
                     description = (edge.props.get("descriptions") or [""])[0]
                     lines.append(f"- {other.props['name']}: {description}")
+            known = facts_about(graph, [node.id])[node.id]
+            if known:
+                lines += ["", "Facts:"]
+                lines += [_fact_line(item) for item in known[:15]]
             chunks = graph.neighbors(node.id, [EdgeType.MENTIONS], "in", limit=1_000_000)
             conversations = {str(chunk.props.get("conversation_id")): chunk for _, chunk in chunks}
             if conversations:
@@ -211,6 +217,22 @@ def create_server(home: Path | None = None) -> MCPServer:
                     title = chunk.props.get("title") or "(untitled)"
                     lines.append(f"- {title} ({about}; conversation {conversation_id})")
         return "\n".join(lines)
+
+    @server.tool(annotations=_READ_ONLY, structured_output=False)
+    def facts(
+        words: Annotated[
+            str | None, Field(description="Only facts that mention these words.")
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=100, description="How many facts.")] = 20,
+    ) -> str:
+        """Facts from the user's conversations: decisions, preferences, plans, settings,
+        and findings, newest first, each with the conversation and message that said
+        it. Use conversation to read around one."""
+        with open_store(library) as graph:
+            found = find_facts(graph, words, limit)
+        if not found:
+            return "No facts mention those words." if words else _NO_FACTS
+        return "\n".join(_fact_line(item, subject=True) for item in found)
 
     @server.tool(annotations=_READ_ONLY, structured_output=False)
     def topics(
@@ -310,6 +332,21 @@ def create_server(home: Path | None = None) -> MCPServer:
 
 _EMPTY = "The library is empty. Run `chatlore import` and `chatlore process` first."
 _NO_TOPICS = "No topics yet. Run `chatlore extract` first."
+_NO_FACTS = "No facts yet. Run `chatlore extract` first."
+
+
+def _fact_line(item: Fact, subject: bool = False) -> str:
+    """A fact with the latest message that said it."""
+    about = f"{item.subject}: " if subject else ""
+    line = f"- {about}{item.statement}"
+    if item.sources:
+        where = item.sources[0]
+        more = f", said {item.said} times" if item.said > 1 else ""
+        line += (
+            f" ({where.title or '(untitled)'}, {where.date or 'undated'}; "
+            f"conversation {where.conversation_id}, message {where.message_id}{more})"
+        )
+    return line
 
 
 def _find_entity(graph: GraphStore, name: str) -> Node | None:

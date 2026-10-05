@@ -46,7 +46,8 @@ class FakeLLM:
     """Answers every kind of ChatLore request from what it is sent, without a model.
 
     Extraction: capitalised words become entities and consecutive entities in a
-    passage are related, so tests can predict the graph from the text. Summary:
+    passage are related, and a sentence saying "decided" is a fact about its first
+    entity, involving its second, so tests can predict the graph from the text. Summary:
     an entity's descriptions joined. Duplicates: two names are the same when one
     starts with the other, ignoring case. Topic report: titled after its first
     entity. Each kind of request is recorded separately, and any request, counted
@@ -168,6 +169,16 @@ class FakeLLM:
             "relationships": [
                 {"source": a, "target": b, "description": f"{a} with {b}", "strength": 6}
                 for a, b in itertools.pairwise(names)
+            ],
+            "facts": [
+                {
+                    "subject": named[0],
+                    "statement": sentence,
+                    "object": named[1] if len(named) > 1 else "",
+                }
+                for sentence in re.split(r"(?<=[.!?])\s+", text)
+                if "decided" in sentence.lower()
+                and (named := list(dict.fromkeys(re.findall(r"\b[A-Z][A-Za-z]+\b", sentence))))
             ],
         }
 
