@@ -199,8 +199,9 @@ def import_(
             "--source",
             "-s",
             help=(
-                "chatgpt, claude, gemini, markdown, chatlore for an archive from "
-                "`chatlore export`, or auto to recognise everything from its content."
+                "chatgpt, claude, gemini, markdown, claude_code, codex, chatlore for an "
+                "archive from `chatlore export`, or auto to recognise everything from its "
+                "content."
             ),
         ),
     ] = "auto",

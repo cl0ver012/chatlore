@@ -4,9 +4,10 @@
 system's bsdtar, 7z and rar) are unpacked, archives inside them too, up to a few
 levels deep. Chat exports are recognised by their content wherever they sit and
 go to their importers: a ChatGPT or Claude ``conversations.json``, a Gemini
-``MyActivity.json``, and ChatLore archives. Every other file ChatLore can read
-becomes a note (``chatlore.importers.documents``). The rest is skipped, and each
-skipped file is listed with the reason, so nothing disappears silently.
+``MyActivity.json``, Claude Code and Codex CLI sessions, and ChatLore archives.
+Every other file ChatLore can read becomes a note
+(``chatlore.importers.documents``). The rest is skipped, and each skipped file
+is listed with the reason, so nothing disappears silently.
 
 Unpacking is limited in total size and file count and never writes outside its
 folder, so a hostile archive can neither fill the disk nor overwrite anything.
@@ -30,6 +31,7 @@ from pathlib import Path
 
 from chatlore.archive import is_archive
 from chatlore.importers import IMPORTERS, ImportIssue, IssueSink, detect_source
+from chatlore.importers.agents import session_kind
 from chatlore.importers.base import ImporterError, load_json, report
 from chatlore.importers.documents import MEDIA, DocumentError, read_document, readable
 from chatlore.importers.gemini import _is_gemini
@@ -168,6 +170,9 @@ class Intake:
             return
         if lower.endswith(ARCHIVES) and not lower.endswith((".docx", ".xlsx", ".pptx")):
             self._archive(path, shown, depth)
+            return
+        if path.suffix.lower() == ".jsonl" and (kind := session_kind(path)) is not None:
+            self.exports.append(_Export(kind, path, shown))
             return
         if path.suffix.lower() in MEDIA:
             self.skipped.append(Skipped(shown, "images, audio, video, and programs are not read"))

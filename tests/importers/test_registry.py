@@ -17,6 +17,8 @@ def test_every_importer_is_registered_under_its_own_kind() -> None:
         SourceKind.CLAUDE: SourceKind.CLAUDE,
         SourceKind.GEMINI: SourceKind.GEMINI,
         SourceKind.MARKDOWN: SourceKind.MARKDOWN,
+        SourceKind.CLAUDE_CODE: SourceKind.CLAUDE_CODE,
+        SourceKind.CODEX: SourceKind.CODEX,
     }
 
 

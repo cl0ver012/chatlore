@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from chatlore.importers.agents import ClaudeCodeImporter, CodexImporter
 from chatlore.importers.base import (
     Importer,
     ImporterError,
@@ -26,6 +27,8 @@ IMPORTERS: dict[SourceKind, Importer] = {
     SourceKind.CLAUDE: ClaudeImporter(),
     SourceKind.GEMINI: GeminiImporter(),
     SourceKind.MARKDOWN: MarkdownImporter(),
+    SourceKind.CLAUDE_CODE: ClaudeCodeImporter(),
+    SourceKind.CODEX: CodexImporter(),
 }
 
 __all__ = [
