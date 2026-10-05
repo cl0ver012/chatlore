@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Claude Code and Codex CLI sessions import like any export: `chatlore import
+  ~/.claude/projects` or `~/.codex/sessions`, or the session files in **Your data**.
+  Each session becomes a conversation, source `claude_code` or `codex`, recognised by its
+  records wherever it sits. What was said is chunked and read into the graph; tool calls and
+  results are kept, shortened, but not chunked; hidden reasoning, subagent side chains, slash
+  commands, and injected context are left out. Guide in `docs/importers.md`.
 - A Deploy workflow that puts the hosted demo on a Hugging Face Space, creating it on the first
   run, for every released version and on request. Steps in `docs/hosting.md`.
 
