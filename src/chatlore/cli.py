@@ -42,7 +42,7 @@ from chatlore.importers import (
 )
 from chatlore.importers.intake import Intake, describe
 from chatlore.library import AddOutcome, Library
-from chatlore.llm import OPENROUTER_KEY_ENV, LLMError, llm_settings, make_llm
+from chatlore.llm import LLMError, llm_settings, make_llm
 from chatlore.paths import HOME_ENV, default_home, demo_home, spaces_home
 from chatlore.pipeline import (
     EmbeddingModelMismatchError,
@@ -175,8 +175,8 @@ def _describe_llm() -> str:
         return str(error)
     if settings.api_key is not None:
         key = "API key set"
-    elif settings.is_openrouter:
-        key = f"no API key, set {OPENROUTER_KEY_ENV}"
+    elif settings.key_env is not None:
+        key = f"no API key, set {settings.key_env}"
     else:
         key = "no API key needed"
     return f"{settings.model} via {settings.base_url} (reasoning {settings.reasoning}, {key})"
@@ -1014,7 +1014,7 @@ def _has_llm_key() -> bool:
         settings = llm_settings()
     except LLMError:
         return False
-    return settings.api_key is not None or not settings.is_openrouter
+    return settings.api_key is not None or settings.key_env is None
 
 
 def _progress() -> Progress:
