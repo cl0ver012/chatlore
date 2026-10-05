@@ -34,6 +34,7 @@ from chatlore.archive import (
 from chatlore.chat import MAX_SOURCES, ChatLimits, answer, cited, retrieve
 from chatlore.embeddings import EmbeddingCache, EmbeddingError, make_embedder, normalise
 from chatlore.extraction import ExtractionCache, entity_key
+from chatlore.facts import Fact, facts_about, find_facts
 from chatlore.importers import (
     ImporterError,
     ImportIssue,
@@ -528,7 +529,7 @@ def extract(
 ) -> None:
     """Build the entity graph and its topics with a language model.
 
-    Reads new chunks for entities and relationships, summarises entities, links
+    Reads new chunks for entities, relationships, and facts, summarises entities, links
     duplicates, and writes topic reports. Safe to repeat and to interrupt.
     """
     home = default_home()
@@ -631,6 +632,7 @@ def extract(
         table.add_row("entities", str(graph.entities))
         table.add_row("relationships", str(graph.relationships))
         table.add_row("mentions", str(graph.mentions))
+        table.add_row("facts", str(graph.facts))
         table.add_row("topics", str(store.count_nodes(Label.TOPIC)))
     console.print(table)
     if failure is not None:
@@ -674,6 +676,38 @@ def topics(
 
 
 @app.command()
+def facts(
+    words: Annotated[
+        str | None, typer.Argument(help="Only facts that mention these words.")
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="How many facts.")] = 20,
+) -> None:
+    """List facts found by `chatlore extract`, newest first, with where they were said."""
+    with open_store(default_home()) as store:
+        if store.count_nodes(Label.FACT) == 0:
+            console.print("No facts yet. Run `chatlore extract` first.")
+            return
+        shown = find_facts(store, words, limit)
+        if not shown:
+            console.print("No facts mention those words.")
+            return
+        for item in shown:
+            _print_fact(item, subject=True)
+
+
+def _print_fact(item: Fact, subject: bool = False) -> None:
+    about = f"[bold]{escape(item.subject)}[/bold]: " if subject else ""
+    console.print(f"  {about}{escape(item.statement)}", highlight=False)
+    if item.sources:
+        where = item.sources[0]
+        more = f" and {item.said - 1} more" if item.said > 1 else ""
+        console.print(
+            f"    [dim]{where.date or 'undated'} | {escape(where.title or '(untitled)')} | "
+            f"{where.conversation_id}{more}[/dim]"
+        )
+
+
+@app.command()
 def entity(
     name: Annotated[str, typer.Argument(help="The entity's name, or words from it.")],
 ) -> None:
@@ -708,6 +742,12 @@ def entity(
                 console.print(
                     f"  {other.props['name']}: {description}", markup=False, highlight=False
                 )
+
+        known = facts_about(store, [node.id])[node.id]
+        if known:
+            console.print("[bold]Facts[/bold]")
+            for item in known[:10]:
+                _print_fact(item)
 
         chunks = store.neighbors(node.id, [EdgeType.MENTIONS], "in", limit=1_000_000)
         conversations = {str(chunk.props.get("conversation_id")): chunk for _, chunk in chunks}

@@ -114,7 +114,8 @@ could read it.
 | `ask_context` | The passages that best answer a question, numbered for citation, with notes on the entities and topics it names. The same retrieval as `chatlore ask`, without the answer. |
 | `search` | Messages matching words, meaning, and the entities they mention, optionally from one source. |
 | `conversation` | A conversation's messages. Long ones come in parts of about 30,000 characters: from the start, or around a message found by the other tools. |
-| `entity` | What the graph knows about a person, project, tool, or place: summary, other names, topic, relationships, and the conversations it came up in. |
+| `entity` | What the graph knows about a person, project, tool, or place: summary, other names, topic, relationships, facts, and the conversations it came up in. |
+| `facts` | Decisions, preferences, plans, and findings from the conversations, newest first or matching some words, each with the conversation and message that said it. |
 | `topics` | The topics, largest first, or those whose report mentions some words. |
 | `topic` | A topic's report: summary, findings, and every entity in it. |
 

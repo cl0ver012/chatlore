@@ -1,8 +1,10 @@
-"""Entity and relationship extraction with a language model.
+"""Entity, relationship, and fact extraction with a language model.
 
-The model reads chunks and names the entities each one mentions and how they
-relate. It chooses entity types itself; a suggested list keeps the common kinds
-consistent, so one thing is not filed under five different labels.
+The model reads chunks and names the entities each one mentions, how they
+relate, and the facts the passage states about them: decisions, preferences,
+plans, and findings worth remembering. It chooses entity types itself; a
+suggested list keeps the common kinds consistent, so one thing is not filed
+under five different labels.
 
 Answers are cached on disk by model, prompt version, and text hash. The graph
 is assembled from that cache instead of being edited in place, so text removed
@@ -24,8 +26,12 @@ from typing import Any, Self
 from chatlore.ids import content_hash
 from chatlore.llm import ChatMessage
 
-PROMPT_VERSION = "1"
-"""Bump when the prompt changes in a way that should re-read every chunk."""
+PROMPT_VERSION = "2"
+"""Bump when the prompt changes in a way that should re-read every chunk.
+
+Answers to earlier versions still build the graph until each chunk is read
+again, so upgrading never empties a graph. Version 2 added facts.
+"""
 
 SUGGESTED_TYPES = ("person", "organization", "project", "tool", "concept", "place", "event")
 OTHER_TYPE = "other"
@@ -84,12 +90,23 @@ Relationships connect two entities from the same passage's list.
 - description: one sentence on how they relate.
 - strength: 1 to 10, how strongly the passage links them.
 
+Facts are what the passage establishes that the person would want to remember
+later: decisions, preferences, plans, settings, numbers, findings, and problems
+with their fixes. Skip general knowledge any textbook holds, and options that
+were only considered.
+- subject: the entity from the passage's list the fact is about.
+- statement: one self-contained sentence that names the subject and makes sense
+  without the passage, for example "The shop backend moved from MySQL to
+  PostgreSQL to get JSON columns."
+- object: another entity from the list the fact involves, or "" if none.
+
 Reply with only a JSON object in this shape, including every passage and using
 empty lists when nothing qualifies:
 {{"passages": [{{"passage": 1,
   "entities": [{{"name": "...", "type": "...", "description": "..."}}],
   "relationships": [{{"source": "...", "target": "...", "description": "...",
-                     "strength": 7}}]}}]}}"""
+                     "strength": 7}}],
+  "facts": [{{"subject": "...", "statement": "...", "object": ""}}]}}]}}"""
 
 
 class ExtractionError(Exception):
@@ -112,11 +129,20 @@ class ExtractedRelationship:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractedFact:
+    subject: str
+    statement: str
+    object: str = ""
+    """Another entity the fact involves, or empty."""
+
+
+@dataclass(frozen=True, slots=True)
 class Extraction:
     """What the model found in one chunk."""
 
     entities: tuple[ExtractedEntity, ...] = ()
     relationships: tuple[ExtractedRelationship, ...] = ()
+    facts: tuple[ExtractedFact, ...] = ()
 
     def to_json(self) -> str:
         return json.dumps(
@@ -125,6 +151,7 @@ class Extraction:
                 "relationships": [
                     [r.source, r.target, r.description, r.strength] for r in self.relationships
                 ],
+                "facts": [[f.subject, f.statement, f.object] for f in self.facts],
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -136,6 +163,7 @@ class Extraction:
         return cls(
             entities=tuple(ExtractedEntity(*item) for item in data["entities"]),
             relationships=tuple(ExtractedRelationship(*item) for item in data["relationships"]),
+            facts=tuple(ExtractedFact(*item) for item in data.get("facts", [])),
         )
 
 
@@ -159,6 +187,15 @@ def entity_key(name: str) -> str:
     return key
 
 
+def fact_key(statement: str) -> str:
+    """The form of a statement that decides whether two facts say the same thing.
+
+    Case, spacing, and trailing punctuation are ignored, so one sentence found
+    in two overlapping chunks is one fact.
+    """
+    return " ".join(statement.casefold().split()).rstrip(_TRAILING_PUNCTUATION).rstrip()
+
+
 def canonical_type(kind: str) -> str:
     """Map an invented type onto a suggested one when it clearly means the same."""
     return TYPE_ALIASES.get(kind, kind)
@@ -175,8 +212,9 @@ def extraction_messages(texts: Sequence[str]) -> list[ChatMessage]:
 def parse_extractions(answer: str, count: int) -> list[Extraction | None]:
     """Read the model's answer for ``count`` passages.
 
-    Malformed items are dropped rather than failing the whole answer, and a
-    relationship is kept only when both ends are entities of its passage. A
+    Malformed items are dropped rather than failing the whole answer. A
+    relationship is kept only when both ends are entities of its passage, and a
+    fact only when its subject is; an object that is not one is left out. A
     passage the model left out comes back as ``None`` so it is asked again.
     """
     try:
@@ -222,7 +260,18 @@ def _passage(passage: Mapping[str, Any]) -> Extraction:
                     _strength(item.get("strength")),
                 )
             )
-    return Extraction(tuple(entities.values()), tuple(relationships))
+
+    facts: dict[str, ExtractedFact] = {}
+    for item in _list(passage.get("facts")):
+        subject = entity_key(_text(item.get("subject")))
+        statement = _text(item.get("statement"))
+        key = fact_key(statement)
+        if subject not in entities or not key or key in facts:
+            continue
+        other = entity_key(_text(item.get("object")))
+        named = entities[other].name if other in entities and other != subject else ""
+        facts[key] = ExtractedFact(entities[subject].name, statement, named)
+    return Extraction(tuple(entities.values()), tuple(relationships), tuple(facts.values()))
 
 
 def _list(value: Any) -> list[dict[str, Any]]:
@@ -454,7 +503,10 @@ class ExtractionCache:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def get_many(self, model: str, hashes: Sequence[str]) -> dict[str, Extraction]:
+    def get_many(
+        self, model: str, hashes: Sequence[str], *, earlier: bool = False
+    ) -> dict[str, Extraction]:
+        """Answers to the current prompt; with ``earlier``, to an earlier one where missing."""
         found: dict[str, Extraction] = {}
         for digest in hashes:
             row = self._connection.execute(
@@ -462,6 +514,12 @@ class ExtractionCache:
                 "WHERE model = ? AND prompt_version = ? AND text_hash = ?",
                 (model, PROMPT_VERSION, digest),
             ).fetchone()
+            if row is None and earlier:
+                row = self._connection.execute(
+                    "SELECT extraction FROM extractions WHERE model = ? AND text_hash = ? "
+                    "ORDER BY CAST(prompt_version AS INTEGER) DESC LIMIT 1",
+                    (model, digest),
+                ).fetchone()
             if row is not None:
                 found[digest] = Extraction.from_json(row[0])
         return found

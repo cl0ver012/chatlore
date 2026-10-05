@@ -69,6 +69,7 @@ def test_the_tools_are_listed_read_only_with_instructions(server: MCPServer) -> 
         "search",
         "ask_context",
         "entity",
+        "facts",
         "topics",
         "topic",
         "conversation",

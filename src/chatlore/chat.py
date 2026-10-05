@@ -18,6 +18,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 from chatlore.extraction import entity_key
+from chatlore.facts import Fact, facts_about
 from chatlore.ids import entity_id
 from chatlore.llm import ChatMessage, StreamingLLM
 from chatlore.store import EdgeType, GraphStore, Label, Node
@@ -26,6 +27,7 @@ RRF_K = 60
 MAX_SOURCES = 8
 MAX_ENTITIES = 6
 MAX_TOPICS = 2
+MAX_FACTS = 8
 CHUNKS_PER_ENTITY = 3
 NEAR_CANDIDATES = 25
 """Chunks ranked by meaning, per source asked for, that named entities choose from."""
@@ -131,7 +133,7 @@ class Source:
 
 @dataclass(frozen=True, slots=True)
 class Note:
-    """Background from the knowledge graph: an entity or a topic."""
+    """Background from the knowledge graph: an entity, a fact, or a topic."""
 
     name: str
     kind: str
@@ -222,6 +224,7 @@ def _notes(store: GraphStore, entities: Sequence[Node]) -> list[Note]:
         for node in entities[:MAX_ENTITIES]
         if (summary := node.props.get("summary"))
     ]
+    notes += _fact_notes(store, entities[:MAX_ENTITIES])
     counts: dict[str, int] = {}
     topics: dict[str, Node] = {}
     in_topics = store.neighbors_many((node.id for node in entities), [EdgeType.IN_TOPIC])
@@ -233,6 +236,25 @@ def _notes(store: GraphStore, entities: Sequence[Node]) -> list[Note]:
         topic = topics[topic_id]
         notes.append(Note(str(topic.props["title"]), "topic", str(topic.props["summary"])))
     return notes
+
+
+def _fact_notes(store: GraphStore, entities: Sequence[Node]) -> list[Note]:
+    """The newest facts about the entities, taking turns so each entity is represented."""
+    known = facts_about(store, [node.id for node in entities])
+    chosen: dict[str, Fact] = {}
+    for turn in range(MAX_FACTS):
+        for node in entities:
+            offered = known[node.id]
+            if turn < len(offered) and len(chosen) < MAX_FACTS:
+                chosen.setdefault(offered[turn].id, offered[turn])
+    return [
+        Note(
+            item.subject,
+            "fact",
+            f"{item.statement} (said {item.date})" if item.date else item.statement,
+        )
+        for item in chosen.values()
+    ]
 
 
 def retrieve(
