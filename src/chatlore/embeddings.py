@@ -14,6 +14,7 @@ import hashlib
 import math
 import os
 import sqlite3
+import threading
 from array import array
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -48,8 +49,14 @@ class FastEmbedEmbedder:
         self.name = model
         self._cache_dir = cache_dir
         self._model: Any = None
+        self._loading = threading.Lock()
 
     def _load(self) -> Any:
+        # One load at a time: requests arriving together share one download.
+        with self._loading:
+            return self._load_once()
+
+    def _load_once(self) -> Any:
         if self._model is None:
             # The Hugging Face native downloader crashes on some Windows machines where
             # security or licensing software injects a DLL into every process. The

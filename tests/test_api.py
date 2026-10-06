@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -203,7 +205,7 @@ def test_the_web_interface_is_served_next_to_the_api(client: TestClient) -> None
     assert page.status_code == 200
     assert "<title>ChatLore</title>" in page.text
     assert script.status_code == 200
-    assert "Graph" in script.text
+    assert "Explore" in script.text
     assert client.get("/health").json()["status"] == "ok"
 
 
@@ -213,3 +215,33 @@ def test_the_browser_checks_for_a_newer_interface_on_every_load(client: TestClie
 
     assert script.headers["cache-control"] == "no-cache"
     assert again.status_code == 304
+
+
+def test_a_search_while_the_model_loads_answers_by_words(
+    home: Path, llm: FakeLLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for title, text in NOTES.items():
+        runner.invoke(cli, ["note", text, "--title", title])
+    runner.invoke(cli, ["process"])
+    release = threading.Event()
+
+    class Downloading(FakeEmbedder):
+        def embed_query(self, text: str) -> list[float]:
+            release.wait(5)
+            return super().embed_query(text)
+
+    monkeypatch.setattr("chatlore.api.make_embedder", lambda home: Downloading())
+    monkeypatch.setattr("chatlore.api.SEARCH_WAIT", 0.05)
+    with TestClient(create_app(home)) as client:
+        early = client.get("/search", params={"q": "Moonlight"})
+        release.set()
+        for _ in range(100):
+            later = client.get("/search", params={"q": "Moonlight"})
+            if "X-ChatLore-Meaning" not in later.headers:
+                break
+            time.sleep(0.02)
+
+    assert early.headers["X-ChatLore-Meaning"] == "loading"
+    assert [hit["matched"] for hit in early.json()] == [["words"]]
+    assert "X-ChatLore-Meaning" not in later.headers
+    assert "meaning" in later.json()[0]["matched"]

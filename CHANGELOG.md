@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Explore** in the web interface: the knowledge graph together with the chats it came from,
+  as a way into your conversations. Clicking an entity centres the graph on it and shows its
+  summary, facts, and chats; clicking a chat opens it beside the graph, with every entity it
+  mentions as a link that steers the graph. A trail leads back to where you were, a timeline
+  of chats per month and source buttons narrow it to some chats, and the search suggests
+  entities and chats by any part of a name. It replaces the Graph view. Guide in `docs/web.md`.
+- `GET /explore` and `GET /explore/timeline`, and the entities a chat mentions in
+  `GET /conversations/{id}`.
+- A light and a dark theme for the web interface, following the system until one is chosen
+  with the toggle in the sidebar, and a refreshed look throughout.
+- A chat opened from Search, Ask, or Conversations links the entities it mentions, and opens
+  in Explore with one click. Tool output from coding agents is folded away.
 - Claude Code and Codex CLI sessions import like any export: `chatlore import
   ~/.claude/projects` or `~/.codex/sessions`, or the session files in **Your data**.
   Each session becomes a conversation, source `claude_code` or `codex`, recognised by its
@@ -41,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The first search after `chatlore serve` or `chatlore demo` on a new machine no longer hangs
+  while the embedding model downloads, which took over three minutes on a slow connection.
+  The server loads the model in the background as it starts, a search that comes first
+  answers by words and the web interface says why, and searches arriving together share one
+  download instead of starting one each.
 - Visitors' own libraries work when the demo is shown in another site's frame, as on a Hugging
   Face Space's page: over HTTPS the library cookie is `SameSite=None`, `Secure`, and
   `Partitioned`. It used to be dropped there, so every upload started a new, empty library.

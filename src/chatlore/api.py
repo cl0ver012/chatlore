@@ -55,6 +55,7 @@ from chatlore import __version__
 from chatlore.archive import export_archive, export_markdown
 from chatlore.chat import MAX_SOURCES, ChatLimits, Context, Source, answer, cited, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
+from chatlore.explore import NotFoundError, Window, conversation_entities, explore, timeline
 from chatlore.facts import facts_about, find_facts
 from chatlore.imports import Imports, safe_relative
 from chatlore.library import Library
@@ -170,6 +171,9 @@ def _topic(node: Node, entities: int | None = None) -> dict[str, Any]:
         "entities": props.get("entities", [])[: entities or None],
     }
 
+
+SEARCH_WAIT = 2.0
+"""Seconds a search waits for the embedding model before answering by words alone."""
 
 MAX_UPLOAD = 200_000_000
 """Bytes an upload may have unless the server says otherwise."""
@@ -289,6 +293,7 @@ def create_app(
 
     embedders: list[Embedder] = []
     loading = threading.Lock()
+    warmed = threading.Event()
 
     def embedder() -> Embedder:
         """One embedding model for the whole server, loaded on first use."""
@@ -296,6 +301,16 @@ def create_app(
             if not embedders:
                 embedders.append(make_embedder(library))
             return embedders[0]
+
+    def warm_up() -> None:
+        """Load the embedding model before the first search needs it. The first time
+        on a machine that downloads it, which can take minutes on a slow connection."""
+        try:
+            embedder().embed_query("warm up")
+        except EmbeddingError:
+            pass  # a search that needs it reports the error
+        finally:
+            warmed.set()
 
     # make_llm is looked up when an import needs it, so it can be replaced in tests.
     imports = Imports(embedder, lambda: make_llm(), extract_limit=extract_limit)
@@ -319,6 +334,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        with open_store(library) as graph:
+            embedded = graph.count_embeddings() > 0
+        if embedded or spaces is not None:
+            threading.Thread(target=warm_up, name="chatlore-warm-up", daemon=True).start()
+        else:
+            warmed.set()
         async with anyio.create_task_group() as tasks:
             if spaces is not None:
                 tasks.start_soon(sweeping)
@@ -345,9 +366,15 @@ def create_app(
         space = _visitor.get()
         return space.home if space is not None else library
 
-    def embed(text: str, graph: GraphStore) -> list[float] | None:
-        """The query's embedding, or None when the library has no embeddings."""
+    def embed(text: str, graph: GraphStore, wait: float | None = None) -> list[float] | None:
+        """The query's embedding, or None when the library has no embeddings.
+
+        With ``wait``, also None when the model is still loading after that many
+        seconds, so a search can answer by words instead of hanging.
+        """
         if graph.count_embeddings() == 0:
+            return None
+        if wait is not None and not warmed.wait(wait):
             return None
         try:
             return normalise(embedder().embed_query(text))
@@ -541,14 +568,22 @@ def create_app(
 
     @app.get("/search")
     def search(
+        response: Response,
         q: Annotated[str, Query(min_length=1)],
         limit: Annotated[int, Query(ge=1, le=100)] = 10,
         source: Annotated[list[str] | None, Query()] = None,
         mode: Annotated[str, Query(pattern="^(words|hybrid)$")] = "hybrid",
     ) -> list[dict[str, Any]]:
-        """Messages matching ``q``: by words only, or by words, meaning, and entities."""
+        """Messages matching ``q``: by words only, or by words, meaning, and entities.
+
+        While the embedding model is still loading, such as during its first
+        download, a hybrid search answers by words and says so in the header
+        ``X-ChatLore-Meaning: loading``.
+        """
         with store() as graph:
-            vector = embed(q, graph) if mode == "hybrid" else None
+            vector = embed(q, graph, wait=SEARCH_WAIT) if mode == "hybrid" else None
+            if vector is None and mode == "hybrid" and not warmed.is_set():
+                response.headers["X-ChatLore-Meaning"] = "loading"
             if vector is None:
                 return [
                     {
@@ -604,8 +639,10 @@ def create_app(
 
     @app.get("/conversations/{conversation_id}")
     def conversation(conversation_id: str) -> dict[str, Any]:
+        """A conversation's messages, and the entities it mentions with the messages they are in."""
         with store() as graph:
             found = graph.get_conversation(conversation_id)
+            mentioned = conversation_entities(graph, conversation_id) if found else []
         if found is None:
             raise HTTPException(404, "no such conversation")
         return {
@@ -613,6 +650,7 @@ def create_app(
             "source": found.source.value,
             "title": found.title,
             "created_at": found.created_at.isoformat() if found.created_at else None,
+            "entities": mentioned,
             "messages": [
                 {
                     "id": message.id,
@@ -688,6 +726,45 @@ def create_app(
         """Facts whose statement or subject matches ``q``, or the newest facts."""
         with store() as graph:
             return [item.as_dict() for item in find_facts(graph, q, limit)]
+
+    @app.get("/explore")
+    def explore_view(
+        entity: str | None = None,
+        conversation: str | None = None,
+        topic: str | None = None,
+        source: Annotated[list[str] | None, Query()] = None,
+        since: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}(-\d{2})?$")] = None,
+        until: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}(-\d{2})?$")] = None,
+        entities: Annotated[int, Query(ge=1, le=200)] = 40,
+        conversations: Annotated[int, Query(ge=0, le=100)] = 16,
+    ) -> dict[str, Any]:
+        """Entities and the conversations they came up in, to explore the library as a graph.
+
+        Around an ``entity``, a ``conversation``, or a ``topic``, or an overview;
+        ``source``, ``since``, and ``until`` keep only some conversations.
+        """
+        window = Window(frozenset(source or ()), since, until)
+        with store() as graph:
+            try:
+                return explore(
+                    graph,
+                    entity=entity,
+                    conversation=conversation,
+                    topic=topic,
+                    window=window,
+                    entities=entities,
+                    conversations=conversations,
+                )
+            except NotFoundError as error:
+                raise HTTPException(404, str(error)) from error
+
+    @app.get("/explore/timeline")
+    def explore_timeline(
+        source: Annotated[list[str] | None, Query()] = None,
+    ) -> list[dict[str, Any]]:
+        """How many conversations started in each month, oldest first."""
+        with store() as graph:
+            return timeline(graph, source or ())
 
     @app.get("/topics")
     def topics(
