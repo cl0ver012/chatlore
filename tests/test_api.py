@@ -203,7 +203,7 @@ def test_the_web_interface_is_served_next_to_the_api(client: TestClient) -> None
     assert page.status_code == 200
     assert "<title>ChatLore</title>" in page.text
     assert script.status_code == 200
-    assert "Graph" in script.text
+    assert "Explore" in script.text
     assert client.get("/health").json()["status"] == "ok"
 
 

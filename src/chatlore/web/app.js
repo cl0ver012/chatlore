@@ -102,18 +102,52 @@ async function* events(response) {
 
 const opened = new Set();
 
-function show(view) {
+/** Show a view; Explore starts on the overview unless ``overview`` is false. */
+function show(view, overview = true) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${view}`));
   if (!opened.has(view)) {
     opened.add(view);
     if (view === "conversations") Conversations.load();
     if (view === "topics") Topics.load();
-    if (view === "graph") Graph.start();
+    if (view === "explore") {
+      Explore.start();
+      if (overview) Explore.go(null);
+    }
   }
-  if (view === "graph") Graph.resize();
+  if (view === "explore") Explore.resize();
   if (view === "ask") $("#ask-input").focus();
 }
+
+// -- theme -----------------------------------------------------------------------------
+
+const Theme = {
+  current() {
+    return document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  },
+
+  toggle() {
+    const next = this.current() === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem("chatlore-theme", next);
+    } catch {
+      // the choice lasts for this page only
+    }
+    this.render();
+    Explore.renderSources();
+  },
+
+  render() {
+    const dark = this.current() === "dark";
+    $("#theme-toggle").classList.toggle("dark", dark);
+    $("#theme-toggle").setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+    $("#theme-toggle .theme-label").textContent = dark ? "Light mode" : "Dark mode";
+  },
+};
+
+$("#theme-toggle").addEventListener("click", () => Theme.toggle());
+Theme.render();
 
 document.querySelectorAll("nav button[data-view]").forEach((button) => button.addEventListener("click", () => show(button.dataset.view)));
 document.querySelectorAll("dialog [data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
@@ -366,31 +400,92 @@ drop.addEventListener("drop", (event) => {
 
 // -- conversations ---------------------------------------------------------------------
 
+/** A conversation's messages as chat bubbles; tool output is folded away. */
+function renderMessages(messages, marked) {
+  return messages
+    .map((m) =>
+      m.role === "tool"
+        ? `<details class="tool-output" id="msg-${esc(m.id)}"><summary>Tool output</summary><pre>${esc(m.text)}</pre></details>`
+        : `<div class="bubble ${esc(m.role)} ${m.id === marked ? "highlight" : ""}" id="msg-${esc(m.id)}">
+            <div class="bubble-meta">${esc(m.role === "user" ? "You" : m.role)}${m.created_at ? " · " + esc(date(m.created_at)) : ""}</div>
+            ${markdown(m.text)}</div>`,
+    )
+    .join("");
+}
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Turn the names of ``entities`` in the text under ``root`` into buttons carrying
+ * ``data-<attribute>`` with the entity's id, longest names first, whole words only,
+ * and never inside code. */
+function linkEntities(root, entities, attribute = "steer") {
+  const named = entities.filter((e) => e.name && e.name.length >= 2).sort((a, b) => b.name.length - a.name.length);
+  if (!root || !named.length) return;
+  const byName = new Map(named.map((e) => [e.name.toLowerCase(), e]));
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${named.map((e) => escapeRegExp(e.name)).join("|")})(?![\\p{L}\\p{N}_])`, "giu");
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) =>
+      node.parentElement.closest("pre, code, button, summary, .bubble-meta") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  const texts = [];
+  while (walker.nextNode()) texts.push(walker.currentNode);
+  for (const node of texts) {
+    const value = node.nodeValue;
+    const matches = [...value.matchAll(pattern)];
+    if (!matches.length) continue;
+    const fragment = document.createDocumentFragment();
+    let at = 0;
+    for (const match of matches) {
+      const entity = byName.get(match[0].toLowerCase());
+      if (!entity) continue;
+      fragment.append(value.slice(at, match.index));
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "mention";
+      button.dataset[attribute] = entity.id;
+      button.dataset.label = entity.name;
+      button.textContent = match[0];
+      fragment.append(button);
+      at = match.index + match[0].length;
+    }
+    fragment.append(value.slice(at));
+    node.replaceWith(fragment);
+  }
+}
+
 async function openConversation(id, messageId) {
   const sheet = $("#conversation");
   $("#conversation-title").textContent = "Loading…";
   $("#conversation-meta").textContent = "";
   $("#conversation-body").innerHTML = "";
+  $("#conversation-explore").dataset.id = id;
   if (!sheet.open) sheet.showModal();
   try {
     const conversation = await api(`/conversations/${encodeURIComponent(id)}`);
     $("#conversation-title").textContent = conversation.title || "Untitled conversation";
-    $("#conversation-meta").textContent = [conversation.source, date(conversation.created_at), `${conversation.messages.length} messages`]
+    $("#conversation-meta").textContent = [sourceName(conversation.source), date(conversation.created_at), `${conversation.messages.length} messages`]
       .filter(Boolean)
       .join(" · ");
-    $("#conversation-body").innerHTML = conversation.messages
-      .map(
-        (m) => `<div class="bubble ${esc(m.role)} ${m.id === messageId ? "highlight" : ""}" id="msg-${esc(m.id)}">
-          <div class="bubble-meta">${esc(m.role)}${m.created_at ? " · " + esc(date(m.created_at)) : ""}</div>
-          ${markdown(m.text)}</div>`,
-      )
-      .join("");
+    $("#conversation-body").innerHTML = renderMessages(conversation.messages, messageId);
+    linkEntities($("#conversation-body"), conversation.entities, "exploreEntity");
     const target = messageId && document.getElementById(`msg-${messageId}`);
     if (target) target.scrollIntoView({ block: "center" });
   } catch (error) {
     $("#conversation-body").innerHTML = `<p class="error">${esc(error.message)}</p>`;
   }
 }
+
+$("#conversation-explore").addEventListener("click", (event) => {
+  $("#conversation").close();
+  explore("conversation", event.currentTarget.dataset.id, $("#conversation-title").textContent);
+});
+
+$("#conversation-body").addEventListener("click", (event) => {
+  const mention = event.target.closest("[data-explore-entity]");
+  if (!mention) return;
+  $("#conversation").close();
+  explore("entity", mention.dataset.exploreEntity, mention.dataset.label);
+});
 
 const Conversations = {
   all: [],
@@ -632,7 +727,7 @@ const Topics = {
         <div class="chips">${topic.members
           .map((m) => `<button type="button" class="chip" data-entity="${esc(m.id)}">${esc(m.name)}</button>`)
           .join("")}</div>
-        <div class="sheet-actions"><button type="button" class="primary" data-graph-topic="${esc(topic.id)}">Open in graph</button></div>`;
+        <div class="sheet-actions"><button type="button" class="primary" data-graph-topic="${esc(topic.id)}" data-label="${esc(topic.title)}">Explore in the graph</button></div>`;
     } catch (error) {
       $("#topic-body").innerHTML = `<p class="error">${esc(error.message)}</p>`;
     }
@@ -654,44 +749,62 @@ $("#topic-body").addEventListener("click", (event) => {
   const button = event.target.closest("[data-graph-topic]");
   if (!chip && !button) return;
   $("#topic").close();
-  show("graph");
-  if (chip) Graph.load({ entity: chip.dataset.entity, limit: 60 });
-  else {
-    $("#graph-topic").value = button.dataset.graphTopic;
-    Graph.load({ topic: button.dataset.graphTopic });
-  }
+  if (chip) explore("entity", chip.dataset.entity, chip.textContent.trim());
+  else explore("topic", button.dataset.graphTopic, button.dataset.label);
 });
 
-// -- graph -----------------------------------------------------------------------------
+// -- explore ---------------------------------------------------------------------------
+//
+// The knowledge graph as a way into the conversations: entities and the chats they
+// came up in, drawn together. Clicking an entity centres the graph on it and shows
+// what is known about it; clicking a chat opens it beside the graph, with the
+// entities it mentions as links that steer the graph. A trail keeps the way back,
+// and the timeline and source filters narrow everything to some chats.
 
-const PALETTE = ["#5b5bd6", "#e5604d", "#1f9e8f", "#e8a317", "#b0417f", "#2f86c9", "#5e9e3a",
-  "#d06a86", "#8062c4", "#d9822b", "#2aa872", "#a8559c"];
-const OVERVIEW = { limit: 100 };
+const PALETTE = ["#6d5dfc", "#f0644f", "#14a38b", "#e8a317", "#c44a8f", "#2f8ad6", "#62a83a",
+  "#d9708e", "#8a63d2", "#e0822b", "#2bb07a", "#ad5aa0"];
+const SOURCE_NAMES = { chatgpt: "ChatGPT", claude: "Claude", gemini: "Gemini", claude_code: "Claude Code",
+  codex: "Codex", markdown: "Notes", note: "Notes", document: "Documents", email: "Email", chatlore: "ChatLore" };
+const sourceName = (source) => SOURCE_NAMES[source] || source || "";
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthLabel = (month) => `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
+const clip = (text, length) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-const Graph = {
+const Explore = {
   nodes: [],
   edges: [],
   byId: new Map(),
   view: { scale: 1, x: 0, y: 0 },
   alpha: 0,
   hover: null,
-  selected: null,
+  focus: null,
   pointer: null,
   topicColors: new Map(),
   topicTitles: new Map(),
+  trail: [],
+  target: null,
+  sources: new Set(),
+  allSources: [],
+  range: null,
+  months: [],
+  panel: [],
 
   start() {
     this.canvas = $("#graph-canvas");
     this.context = this.canvas.getContext("2d");
     this.bindPointer();
+    this.bindTimeline();
     window.addEventListener("resize", () => this.resize());
     this.resize();
-    api("/topics?limit=300").then((topics) => {
-      $("#graph-topic").innerHTML =
-        '<option value="">Most connected entities</option>' +
-        topics.map((t) => `<option value="${esc(t.id)}">${esc(t.title)} · ${t.size}</option>`).join("");
-    });
-    this.load(OVERVIEW);
+    api("/conversations?limit=500")
+      .then((all) => {
+        Search.conversations = all;
+        this.allSources = [...new Set(all.map((c) => c.source))].sort();
+        this.renderSources();
+      })
+      .catch(() => {});
+    this.loadTimeline();
     requestAnimationFrame((time) => this.frame(time));
   },
 
@@ -708,60 +821,123 @@ const Graph = {
   },
 
   color(topic) {
-    if (!topic) return "#9aa0b0";
+    if (!topic) return css("--node-plain") || "#9aa0b0";
     if (!this.topicColors.has(topic)) this.topicColors.set(topic, PALETTE[this.topicColors.size % PALETTE.length]);
     return this.topicColors.get(topic);
   },
 
+  sourceColor(source) {
+    return css(`--src-${source}`) || css("--src-other");
+  },
+
   radius(node) {
+    if (node.kind === "conversation") return Math.min(13, 7 + Math.sqrt(node.messages || 1) * 0.9);
     return Math.min(22, 5 + Math.sqrt(node.mentions || 1) * 1.7);
   },
 
-  /** Load part of the graph; with ``merge`` it is added to what is already drawn. */
-  async load(params, merge = false) {
+  label(node) {
+    return node.kind === "conversation" ? node.title || "Untitled conversation" : node.name;
+  },
+
+  // -- where we are -------------------------------------------------------------------
+
+  /** Centre the graph on ``target`` ({kind, id, label}), or the overview for null. */
+  go(target, { record = true } = {}) {
+    this.target = target;
+    if (record) {
+      const last = this.trail[this.trail.length - 1];
+      if (!target) this.trail = [];
+      else if (!last || last.id !== target.id) this.trail.push(target);
+    }
+    this.renderTrail();
+    return this.load();
+  },
+
+  params() {
+    const params = new URLSearchParams();
+    if (this.target) params.set(this.target.kind, this.target.id);
+    this.sources.forEach((source) => params.append("source", source));
+    if (this.range) {
+      params.set("since", this.months[this.range[0]].month);
+      params.set("until", this.months[this.range[1]].month);
+    }
+    return params;
+  },
+
+  async load() {
     $("#graph-info").textContent = "Loading…";
+    const request = (this.request = (this.request || 0) + 1);
     try {
-      const data = await api(`/graph?${new URLSearchParams(params)}`);
-      if (!merge) {
-        this.nodes = [];
-        this.edges = [];
-        this.byId = new Map();
-        this.topicColors = new Map();
-        this.view = { scale: 1, x: 0, y: 0 };
-        this.close();
-      }
+      const data = await api(`/explore?${this.params()}`);
+      if (request !== this.request) return; // a newer view was asked for meanwhile
+      const previous = this.byId;
+      const anchor = data.focus && previous.get(data.focus);
+      this.nodes = [];
+      this.byId = new Map();
       data.topics.forEach((t) => this.topicTitles.set(t.id, t.title));
-      const anchor = params.entity && this.byId.get(params.entity);
       for (const node of data.nodes) {
-        if (this.byId.has(node.id)) continue;
+        const kept = previous.get(node.id);
         const angle = Math.random() * Math.PI * 2;
-        const spread = (anchor ? 60 : 260) * Math.random();
-        const entry = { ...node, x: (anchor?.x ?? 0) + Math.cos(angle) * spread, y: (anchor?.y ?? 0) + Math.sin(angle) * spread, vx: 0, vy: 0 };
+        const spread = (anchor ? 80 : 240) * (0.3 + Math.random());
+        const entry = kept
+          ? { ...node, x: kept.x, y: kept.y, vx: 0, vy: 0 }
+          : { ...node, x: (anchor?.x ?? 0) + Math.cos(angle) * spread, y: (anchor?.y ?? 0) + Math.sin(angle) * spread, vx: 0, vy: 0 };
         this.nodes.push(entry);
         this.byId.set(node.id, entry);
       }
-      const seen = new Set(this.edges.map((e) => `${e.source.id}|${e.target.id}`));
-      for (const edge of data.edges) {
-        const key = `${edge.source}|${edge.target}`;
-        if (seen.has(key) || !this.byId.has(edge.source) || !this.byId.has(edge.target)) continue;
-        seen.add(key);
-        this.edges.push({ ...edge, source: this.byId.get(edge.source), target: this.byId.get(edge.target) });
-      }
-      [...this.nodes].sort((a, b) => b.mentions - a.mentions).forEach((n) => this.color(n.topic));
-      this.alpha = 1;
+      this.edges = data.edges
+        .filter((e) => this.byId.has(e.source) && this.byId.has(e.target))
+        .map((e) => ({ ...e, source: this.byId.get(e.source), target: this.byId.get(e.target) }));
+      this.focus = data.focus ? this.byId.get(data.focus) : null;
+      if (this.focus) this.focus.pinned = true;
+      [...this.nodes].filter((n) => n.kind === "entity").sort((a, b) => b.mentions - a.mentions).forEach((n) => this.color(n.topic));
+      this.alpha = previous.size ? 0.7 : 1;
       this.fitted = false;
-      $("#graph-info").textContent = `${number(this.nodes.length)} entities · ${number(this.edges.length)} links`;
+      const chats = this.nodes.filter((n) => n.kind === "conversation").length;
+      const things = this.nodes.length - chats;
+      $("#graph-info").textContent = this.nodes.length
+        ? `${number(things)} ${things === 1 ? "entity" : "entities"} · ${number(chats)} ${chats === 1 ? "chat" : "chats"}`
+        : "Nothing in this stretch of time";
+      $("#explore-empty").hidden = this.nodes.length > 0;
       this.legend();
-      if (params.entity) this.select(this.byId.get(params.entity));
     } catch (error) {
       $("#graph-info").textContent = error.message.startsWith("404") ? "Not found" : "Could not load the graph";
     }
   },
 
+  renderTrail() {
+    const trail = $("#explore-trail");
+    const steps = this.trail.map(
+      (step, index) => `<span class="trail-sep">›</span>
+        <button type="button" data-trail="${index}" class="${index === this.trail.length - 1 ? "current" : ""}">
+          <span class="trail-dot ${step.kind}"></span>${esc(clip(step.label, 34))}</button>`,
+    );
+    trail.innerHTML = `<button type="button" data-trail="-1" class="${this.trail.length ? "" : "current"}">Overview</button>${steps.join("")}`;
+  },
+
+  renderSources() {
+    $("#explore-sources").innerHTML = this.allSources.length > 1
+      ? this.allSources
+          .map((s) => `<button type="button" class="source-chip ${this.sources.size && !this.sources.has(s) ? "off" : ""}" data-source="${esc(s)}">
+            <span class="source-dot" style="background:${this.sourceColor(s)}"></span>${esc(sourceName(s))}</button>`)
+          .join("")
+      : "";
+  },
+
+  toggleSource(source) {
+    const shown = this.sources.size ? new Set(this.sources) : new Set(this.allSources);
+    if (shown.has(source) && shown.size > 1) shown.delete(source);
+    else shown.add(source);
+    this.sources = shown.size === this.allSources.length ? new Set() : shown;
+    this.renderSources();
+    this.loadTimeline();
+    this.load();
+  },
+
   legend() {
     const counts = new Map();
     this.nodes.forEach((n) => n.topic && counts.set(n.topic, (counts.get(n.topic) || 0) + 1));
-    const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 5);
     $("#graph-legend").innerHTML = top.length
       ? '<div class="legend-title">Topics</div>' +
         top
@@ -770,12 +946,87 @@ const Graph = {
               <span class="swatch" style="background:${this.color(id)}"></span>
               <span>${esc(this.topicTitles.get(id) || "Topic")}</span><span class="count">${n}</span></button>`,
           )
-          .join("")
+          .join("") +
+        `<div class="legend-key"><span><i class="key-entity"></i>Entity</span><span><i class="key-chat"></i>Chat</span></div>`
       : "";
   },
 
-  // Force layout: nodes push each other apart, links pull their ends together,
-  // and a weak pull keeps everything near the middle. It cools down and stops.
+  // -- timeline -----------------------------------------------------------------------
+
+  async loadTimeline() {
+    const params = new URLSearchParams();
+    this.sources.forEach((source) => params.append("source", source));
+    try {
+      const months = await api(`/explore/timeline?${params}`);
+      const changed = months.map((m) => m.month).join() !== this.months.map((m) => m.month).join();
+      this.months = months;
+      if (changed) this.range = null;
+      this.renderTimeline();
+    } catch {
+      $("#explore-timeline").hidden = true;
+    }
+  },
+
+  renderTimeline() {
+    const box = $("#explore-timeline");
+    box.hidden = this.months.length < 2;
+    if (box.hidden) return;
+    const most = Math.max(...this.months.map((m) => m.conversations));
+    $("#timeline-bars").innerHTML = this.months
+      .map((m, index) => {
+        const on = !this.range || (index >= this.range[0] && index <= this.range[1]);
+        return `<div class="bar ${on ? "on" : ""}" data-month="${index}" title="${esc(monthLabel(m.month))}: ${m.conversations} chats">
+          <i style="height:${Math.max(10, (100 * m.conversations) / most)}%"></i></div>`;
+      })
+      .join("");
+    const [first, last] = this.range || [0, this.months.length - 1];
+    $("#timeline-label").innerHTML = this.range
+      ? `${esc(monthLabel(this.months[first].month))} – ${esc(monthLabel(this.months[last].month))}
+         <button type="button" class="link" id="timeline-clear">All time</button>`
+      : `${esc(monthLabel(this.months[first].month))} – ${esc(monthLabel(this.months[last].month))} · drag to narrow`;
+  },
+
+  bindTimeline() {
+    const bars = $("#timeline-bars");
+    let start = null;
+    const at = (event) => {
+      const bar = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("[data-month]");
+      return bar ? Number(bar.dataset.month) : null;
+    };
+    bars.addEventListener("pointerdown", (event) => {
+      start = at(event);
+      if (start === null) return;
+      bars.setPointerCapture(event.pointerId);
+      this.range = [start, start];
+      this.renderTimeline();
+    });
+    bars.addEventListener("pointermove", (event) => {
+      if (start === null) return;
+      const here = at(event);
+      if (here === null) return;
+      this.range = [Math.min(start, here), Math.max(start, here)];
+      this.renderTimeline();
+    });
+    bars.addEventListener("pointerup", () => {
+      if (start === null) return;
+      start = null;
+      if (this.range && this.range[0] === 0 && this.range[1] === this.months.length - 1) this.range = null;
+      this.renderTimeline();
+      this.load();
+    });
+    $("#explore-timeline").addEventListener("click", (event) => {
+      if (!event.target.closest("#timeline-clear")) return;
+      this.range = null;
+      this.renderTimeline();
+      this.load();
+    });
+  },
+
+  // -- layout -------------------------------------------------------------------------
+
+  // Force layout: nodes push each other apart, links pull their ends together, and
+  // a weak pull keeps everything near the middle. The node in focus stays put at
+  // the centre. It cools down and stops.
   step() {
     const nodes = this.nodes;
     for (let i = 0; i < nodes.length; i++) {
@@ -791,7 +1042,7 @@ const Graph = {
           d2 = 0.25;
         }
         const d = Math.sqrt(d2);
-        const force = (2600 / d2) * this.alpha;
+        const force = (2800 / d2) * this.alpha;
         const fx = (dx / d) * force;
         const fy = (dy / d) * force;
         a.vx -= fx;
@@ -805,8 +1056,9 @@ const Graph = {
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const rest = 70 + this.radius(a) + this.radius(b);
-      const f = (d - rest) * 0.04 * Math.min(1, 0.4 + (edge.weight || 1) / 20) * this.alpha;
+      const rest = (edge.kind === "mentions" ? 90 : 70) + this.radius(a) + this.radius(b);
+      const strength = edge.kind === "mentions" ? 0.025 : 0.04 * Math.min(1, 0.4 + (edge.weight || 1) / 20);
+      const f = (d - rest) * strength * this.alpha;
       a.vx += (dx / d) * f;
       a.vy += (dy / d) * f;
       b.vx -= (dx / d) * f;
@@ -814,6 +1066,12 @@ const Graph = {
     }
     for (const node of nodes) {
       if (node === this.pointer?.node) continue;
+      if (node === this.focus) {
+        node.x += (0 - node.x) * 0.08;
+        node.y += (0 - node.y) * 0.08;
+        node.vx = node.vy = 0;
+        continue;
+      }
       node.vx = (node.vx - node.x * 0.004 * this.alpha) * 0.82;
       node.vy = (node.vy - node.y * 0.004 * this.alpha) * 0.82;
       node.x += node.vx;
@@ -848,11 +1106,10 @@ const Graph = {
     const edge = Math.floor(this.nodes.length * 0.03);
     const last = this.nodes.length - 1 - edge;
     const [left, right, top, bottom] = [xs[edge], xs[last], ys[edge], ys[last]];
-    const room = this.selected ? 380 : 0;
-    const width = this.width - room - 120;
-    const height = this.height - 170;
-    const scale = Math.max(0.2, Math.min(width / (right - left || 1), height / (bottom - top || 1), 2));
-    this.view = { scale, x: -(left + right) / 2 - room / 2 / scale, y: -(top + bottom) / 2 + 10 / scale };
+    const width = this.width - 140;
+    const height = this.height - 260;
+    const scale = Math.max(0.25, Math.min(width / (right - left || 1), height / (bottom - top || 1), 1.8));
+    this.view = { scale, x: -(left + right) / 2, y: -(top + bottom) / 2 - 10 / scale };
   },
 
   toScreen(x, y) {
@@ -872,70 +1129,101 @@ const Graph = {
     return set;
   },
 
+  // -- drawing ------------------------------------------------------------------------
+
   draw() {
     const ctx = this.context;
     if (!ctx || !this.width) return;
-    const styles = getComputedStyle(document.documentElement);
-    const text = styles.getPropertyValue("--text").trim();
-    const surface = styles.getPropertyValue("--bg").trim();
-    const accent = styles.getPropertyValue("--accent").trim();
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const text = css("--text");
+    const halo = css("--canvas");
+    const accent = css("--accent");
+    const edgeColor = css("--edge");
+    const glow = css("--glow") === "1";
     ctx.clearRect(0, 0, this.width, this.height);
-    const focus = this.hover || this.selected;
-    const near = focus ? this.neighbours(focus) : null;
+    const reading = this.reading && this.byId.get(this.reading);
+    const lit = this.hover || reading || this.focus;
+    const near = lit ? this.neighbours(lit) : null;
     const scale = this.view.scale;
 
     for (const e of this.edges) {
-      const lit = focus && (e.source === focus || e.target === focus);
-      if (focus && !lit) ctx.globalAlpha = 0.35;
+      const touching = lit && (e.source === lit || e.target === lit);
+      ctx.globalAlpha = lit && !touching ? 0.25 : 1;
       const [x1, y1] = this.toScreen(e.source.x, e.source.y);
       const [x2, y2] = this.toScreen(e.target.x, e.target.y);
-      ctx.strokeStyle = lit ? accent : dark ? "rgba(160,168,190,0.22)" : "rgba(80,88,110,0.18)";
-      ctx.lineWidth = lit ? 2 : Math.min(2.6, 0.7 + (e.weight || 1) / 14);
+      ctx.strokeStyle = touching ? accent : edgeColor;
+      ctx.setLineDash(e.kind === "mentions" ? [3, 4] : []);
+      ctx.lineWidth = touching ? 1.8 : e.kind === "mentions" ? 1 : Math.min(2.6, 0.8 + (e.weight || 1) / 14);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
-      ctx.globalAlpha = 1;
     }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
 
     const labels = [];
-    const known = new Set(this.nodes.slice().sort((a, b) => b.mentions - a.mentions).slice(0, 20));
+    const entities = this.nodes.filter((n) => n.kind === "entity");
+    const known = new Set(entities.sort((a, b) => b.mentions - a.mentions).slice(0, 18));
     for (const node of this.nodes) {
       const [x, y] = this.toScreen(node.x, node.y);
       const r = this.radius(node) * Math.sqrt(scale);
-      const faded = focus && node !== focus && !near.has(node);
-      ctx.globalAlpha = faded ? 0.2 : 1;
-      if (node === this.selected) {
+      const faded = lit && node !== lit && !near.has(node);
+      ctx.globalAlpha = faded ? 0.18 : 1;
+      if (node === this.focus || node === reading) {
         ctx.fillStyle = accent;
         ctx.globalAlpha = 0.18;
         ctx.beginPath();
-        ctx.arc(x, y, r + 9, 0, Math.PI * 2);
+        ctx.arc(x, y, r + 10, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
       }
-      ctx.fillStyle = this.color(node.topic);
-      ctx.strokeStyle = surface;
+      const fill = node.kind === "conversation" ? this.sourceColor(node.source) : this.color(node.topic);
+      if (glow && !faded) {
+        ctx.shadowColor = fill;
+        ctx.shadowBlur = node === lit ? 22 : 12;
+      }
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = halo;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
+      if (node.kind === "conversation") {
+        const s = r * 1.7;
+        ctx.roundRect(x - s / 2, y - s / 2, s, s, 4);
+      } else {
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
       ctx.fill();
+      ctx.shadowBlur = 0;
       ctx.stroke();
-      const labelled = node === focus || near?.has(node) || known.has(node) || scale > 1.5;
-      if (labelled && !faded) labels.push({ node, x, y: y + r + 14, strong: node === focus });
+      if (node.kind === "conversation") {
+        // A speech mark, so a chat reads as a chat at a glance.
+        ctx.strokeStyle = "rgba(255,255,255,.9)";
+        ctx.lineWidth = 1.4;
+        const w = r * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(x - w / 2, y - w / 5);
+        ctx.lineTo(x + w / 2, y - w / 5);
+        ctx.moveTo(x - w / 2, y + w / 5);
+        ctx.lineTo(x + w / 5, y + w / 5);
+        ctx.stroke();
+      }
+      const isChat = node.kind === "conversation";
+      const labelled = node === lit || near?.has(node) || (!isChat && known.has(node)) || scale > 1.4;
+      if (labelled && !faded) labels.push({ node, x, y: y + r + (isChat ? 17 : 14), strong: node === lit, isChat });
     }
     ctx.globalAlpha = 1;
 
-    // Labels last, with a halo in the background colour so lines never run through them.
+    // Labels last, with a halo in the canvas colour so lines never run through them.
     ctx.textAlign = "center";
     ctx.lineJoin = "round";
-    for (const { node, x, y, strong } of labels) {
-      ctx.font = `${strong ? 650 : 500} ${strong ? 13 : 12}px Inter, system-ui, sans-serif`;
-      ctx.strokeStyle = surface;
+    for (const { node, x, y, strong, isChat } of labels) {
+      ctx.font = `${strong ? 650 : isChat ? 450 : 520} ${strong ? 13 : 12}px ${css("--font")}`;
+      const words = clip(this.label(node), isChat && !strong ? 30 : 48);
+      ctx.strokeStyle = halo;
       ctx.lineWidth = 4;
-      ctx.strokeText(node.name, x, y);
-      ctx.fillStyle = text;
-      ctx.fillText(node.name, x, y);
+      ctx.strokeText(words, x, y);
+      ctx.fillStyle = isChat ? css("--text-2") : text;
+      ctx.fillText(words, x, y);
     }
   },
 
@@ -943,7 +1231,7 @@ const Graph = {
     for (let i = this.nodes.length - 1; i >= 0; i--) {
       const node = this.nodes[i];
       const [x, y] = this.toScreen(node.x, node.y);
-      const r = this.radius(node) * Math.sqrt(this.view.scale) + 3;
+      const r = this.radius(node) * Math.sqrt(this.view.scale) + 4;
       if ((sx - x) ** 2 + (sy - y) ** 2 <= r * r) return node;
     }
     return null;
@@ -967,6 +1255,7 @@ const Graph = {
       if (!p) {
         this.hover = this.nodeAt(sx, sy);
         canvas.style.cursor = this.hover ? "pointer" : "grab";
+        this.tooltip(this.hover, sx, sy);
         return;
       }
       if (Math.abs(sx - p.sx) + Math.abs(sy - p.sy) > 3) p.moved = true;
@@ -983,9 +1272,12 @@ const Graph = {
       const p = this.pointer;
       this.pointer = null;
       canvas.classList.remove("dragging");
-      if (p && !p.moved) (p.node ? this.select(p.node) : this.close());
+      if (p && !p.moved && p.node) this.open(p.node);
     });
-    canvas.addEventListener("pointerleave", () => (this.hover = null));
+    canvas.addEventListener("pointerleave", () => {
+      this.hover = null;
+      this.tooltip(null);
+    });
     canvas.addEventListener("dblclick", () => this.fit());
     canvas.addEventListener(
       "wheel",
@@ -1002,91 +1294,250 @@ const Graph = {
     );
   },
 
-  close() {
-    this.selected = null;
-    $("#graph-drawer").hidden = true;
-    $("#view-graph").classList.remove("has-drawer");
+  tooltip(node, sx, sy) {
+    const tip = $("#graph-tip");
+    if (!node) {
+      tip.hidden = true;
+      return;
+    }
+    tip.innerHTML =
+      node.kind === "conversation"
+        ? `<strong>${esc(node.title || "Untitled conversation")}</strong><span>${esc([sourceName(node.source), date(node.created_at), node.messages ? `${node.messages} messages` : ""].filter(Boolean).join(" · "))}</span>`
+        : `<strong>${esc(node.name)}</strong><span>${esc([node.type, `${number(node.mentions)} mentions`, this.topicTitles.get(node.topic)].filter(Boolean).join(" · "))}</span>`;
+    tip.hidden = false;
+    tip.style.left = `${sx + 14}px`;
+    tip.style.top = `${sy + 14}px`;
   },
 
-  async select(node) {
-    if (!node) return this.close();
-    this.selected = node;
-    const drawer = $("#graph-drawer");
-    const body = $("#graph-drawer-body");
-    drawer.hidden = false;
-    $("#view-graph").classList.add("has-drawer");
-    body.innerHTML = `<h2>${esc(node.name)}</h2><p class="muted">Loading…</p>`;
+  /** A click on a node: centre the graph on it and show it beside the graph. */
+  open(node) {
+    const target = { kind: node.kind, id: node.id, label: this.label(node) };
+    this.go(target);
+    if (node.kind === "conversation") Panel.open({ kind: "conversation", id: node.id }, true);
+    else Panel.open({ kind: "entity", id: node.id }, true);
+  },
+};
+
+// -- the panel beside the graph: an entity, or a conversation to read ---------------------
+
+const Panel = {
+  stack: [],
+
+  /** Show ``item`` ({kind, id, message?}); ``fresh`` starts a new history instead of adding to it. */
+  async open(item, fresh = false) {
+    if (fresh) this.stack = [];
+    const top = this.stack[this.stack.length - 1];
+    if (!top || top.kind !== item.kind || top.id !== item.id) this.stack.push(item);
+    else this.stack[this.stack.length - 1] = item;
+    await this.render();
+  },
+
+  back() {
+    this.stack.pop();
+    if (this.stack.length) this.render();
+    else this.close();
+  },
+
+  close() {
+    this.stack = [];
+    Explore.reading = null;
+    $("#explore-panel").hidden = true;
+    $("#view-explore").classList.remove("reading");
+    requestAnimationFrame(() => Explore.resize());
+  },
+
+  async render() {
+    const item = this.stack[this.stack.length - 1];
+    const panel = $("#explore-panel");
+    const opening = panel.hidden;
+    panel.hidden = false;
+    $("#view-explore").classList.add("reading");
+    if (opening) requestAnimationFrame(() => Explore.resize());
+    $("#panel-back").hidden = this.stack.length < 2;
+    $("#panel-kicker").textContent = item.kind === "conversation" ? "Conversation" : "Entity";
+    const body = $("#panel-body");
+    body.innerHTML = '<p class="muted panel-loading">Loading…</p>';
+    body.scrollTop = 0;
+    Explore.reading = item.id;
+    const request = (this.request = (this.request || 0) + 1);
     try {
-      const e = await api(`/entities/${encodeURIComponent(node.id)}`);
-      body.innerHTML = `<h2>${esc(e.name)}</h2>
-        <div class="drawer-meta">
-          <span class="tag accent">${esc(e.type)}</span>
-          <span class="tag">${number(e.mentions)} mentions</span>
-          ${e.topic ? `<span class="tag"><span class="swatch" style="background:${this.color(e.topic.id)};margin-right:6px"></span>${esc(e.topic.title)}</span>` : ""}
-        </div>
-        <p>${esc(e.summary || "")}</p>
-        ${e.also_called.length ? `<p class="muted">Also called ${esc(e.also_called.join(", "))}</p>` : ""}
-        <div class="drawer-actions">
-          <button type="button" class="primary" data-expand="${esc(e.id)}">Add neighbours</button>
-          <button type="button" data-focus="${esc(e.id)}">Focus</button>
-        </div>
-        ${e.related.length ? `<h4>Related</h4><ul class="related">${e.related
-          .slice(0, 12)
-          .map((r) => `<li><button type="button" data-focus="${esc(r.id)}"><strong>${esc(r.name)}</strong> · ${esc(r.relationship || "")}</button></li>`)
-          .join("")}</ul>` : ""}
-        ${e.facts.length ? `<h4>Facts</h4><ul class="facts">${e.facts
-          .slice(0, 10)
-          .map((f) => {
-            const said = f.sources[0];
-            const where = said
-              ? `<button type="button" data-conversation="${esc(said.conversation_id)}" data-message="${esc(said.message_id)}">${esc(said.title || "Untitled conversation")}${said.created_at ? ` · ${esc(said.created_at.slice(0, 10))}` : ""}</button>`
-              : "";
-            return `<li><p>${esc(f.statement)}</p>${where}</li>`;
-          })
-          .join("")}</ul>` : ""}
-        ${e.conversations.length ? `<h4>Mentioned in</h4><div class="mentions">${e.conversations
-          .slice(0, 10)
-          .map((c) => `<button type="button" data-conversation="${esc(c.id)}">${esc(c.title || "Untitled conversation")}</button>`)
-          .join("")}</div>` : ""}`;
+      const path = item.kind === "conversation" ? "conversations" : "entities";
+      const data = await api(`/${path}/${encodeURIComponent(item.id)}`);
+      if (request !== this.request) return; // something else was opened meanwhile
+      if (item.kind === "conversation") this.conversation(item, data, body);
+      else this.entity(data, body);
     } catch (error) {
       body.innerHTML = `<p class="error">${esc(error.message)}</p>`;
     }
   },
+
+  entity(e, body) {
+    const topic = e.topic ? `<span class="tag"><span class="swatch" style="background:${Explore.color(e.topic.id)}"></span>${esc(e.topic.title)}</span>` : "";
+    body.innerHTML = `<h2 class="panel-title">${esc(e.name)}</h2>
+      <div class="panel-meta"><span class="tag accent">${esc(e.type)}</span><span class="tag">${number(e.mentions)} mentions</span>${topic}</div>
+      <p class="panel-summary">${esc(e.summary || "")}</p>
+      ${e.also_called.length ? `<p class="muted small">Also called ${esc(e.also_called.join(", "))}</p>` : ""}
+      ${e.facts.length ? `<h4>What you established</h4><ul class="facts">${e.facts
+        .slice(0, 8)
+        .map((f) => {
+          const said = f.sources[0];
+          return `<li><p>${esc(f.statement)}</p>${said ? `<button type="button" class="link-quiet" data-read="${esc(said.conversation_id)}" data-message="${esc(said.message_id)}">${esc(said.title || "Untitled conversation")}${said.created_at ? ` · ${esc(date(said.created_at))}` : ""}</button>` : ""}</li>`;
+        })
+        .join("")}</ul>` : ""}
+      ${e.conversations.length ? `<h4>Talked about in ${e.conversations.length === 1 ? "1 chat" : `${e.conversations.length} chats`}</h4><div class="panel-chats">${e.conversations
+        .slice(0, 12)
+        .map((c) => `<button type="button" class="panel-chat" data-read="${esc(c.id)}"><span class="chat-icon"></span>${esc(c.title || "Untitled conversation")}</button>`)
+        .join("")}</div>` : ""}
+      ${e.related.length ? `<h4>Related</h4><div class="chips">${e.related
+        .slice(0, 14)
+        .map((r) => `<button type="button" class="chip" data-steer="${esc(r.id)}" data-label="${esc(r.name)}" title="${esc(r.relationship || "")}">${esc(r.name)}</button>`)
+        .join("")}</div>` : ""}`;
+  },
+
+  conversation(item, c, body) {
+    const mentioned = c.entities.slice(0, 16);
+    body.innerHTML = `<h2 class="panel-title">${esc(c.title || "Untitled conversation")}</h2>
+      <div class="panel-meta"><span class="tag"><span class="source-dot" style="background:${Explore.sourceColor(c.source)}"></span>${esc(sourceName(c.source))}</span>
+        ${c.created_at ? `<span class="tag">${esc(date(c.created_at))}</span>` : ""}<span class="tag">${c.messages.length} messages</span></div>
+      ${mentioned.length ? `<div class="chips in-chat">${mentioned
+        .map((e) => `<button type="button" class="chip" data-steer="${esc(e.id)}" data-label="${esc(e.name)}">${esc(e.name)}</button>`)
+        .join("")}</div>` : ""}
+      <div class="chat reader">${renderMessages(c.messages, item.message)}</div>`;
+    linkEntities($(".reader", body), c.entities);
+    const target = item.message && document.getElementById(`msg-${item.message}`);
+    if (target) target.scrollIntoView({ block: "center" });
+  },
 };
 
-$("#graph-drawer-close").addEventListener("click", () => Graph.close());
+$("#panel-close").addEventListener("click", () => Panel.close());
+$("#panel-back").addEventListener("click", () => Panel.back());
 
-$("#graph-drawer-body").addEventListener("click", (event) => {
-  const expand = event.target.closest("[data-expand]");
-  const focus = event.target.closest("[data-focus]");
-  if (expand) Graph.load({ entity: expand.dataset.expand, limit: 30 }, true);
-  else if (focus) Graph.load({ entity: focus.dataset.focus, limit: 60 });
+$("#explore-panel").addEventListener("click", (event) => {
+  const read = event.target.closest("[data-read]");
+  const steer = event.target.closest("[data-steer]");
+  if (read) {
+    event.stopPropagation();
+    Panel.open({ kind: "conversation", id: read.dataset.read, message: read.dataset.message });
+    const title = read.textContent.split(" · ")[0].trim();
+    Explore.go({ kind: "conversation", id: read.dataset.read, label: title });
+  } else if (steer) {
+    // An entity in the panel steers the graph; the panel stays where it is.
+    Explore.go({ kind: "entity", id: steer.dataset.steer, label: steer.dataset.label || steer.textContent.trim() });
+  }
+});
+
+$("#explore-trail").addEventListener("click", (event) => {
+  const step = event.target.closest("[data-trail]");
+  if (!step) return;
+  const index = Number(step.dataset.trail);
+  if (index < 0) {
+    Explore.go(null);
+    return;
+  }
+  Explore.trail = Explore.trail.slice(0, index + 1);
+  Explore.go(Explore.trail[index], { record: false });
+});
+
+$("#explore-sources").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-source]");
+  if (chip) Explore.toggleSource(chip.dataset.source);
 });
 
 $("#graph-legend").addEventListener("click", (event) => {
   const item = event.target.closest("[data-legend-topic]");
-  if (!item) return;
-  $("#graph-topic").value = item.dataset.legendTopic;
-  Graph.load({ topic: item.dataset.legendTopic });
+  if (item) Explore.go({ kind: "topic", id: item.dataset.legendTopic, label: Explore.topicTitles.get(item.dataset.legendTopic) || "Topic" });
 });
 
-$("#graph-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const q = $("#graph-input").value.trim();
-  if (!q) return Graph.load(OVERVIEW);
-  const found = await api(`/entities?${new URLSearchParams({ q, limit: 1 })}`);
-  if (found.length) Graph.load({ entity: found[0].id, limit: 60 });
-  else $("#graph-info").textContent = `No entity matches “${q}”`;
-});
-
-$("#graph-topic").addEventListener("change", (event) => Graph.load(event.target.value ? { topic: event.target.value } : OVERVIEW));
-$("#graph-fit").addEventListener("click", () => Graph.fit());
+$("#graph-fit").addEventListener("click", () => Explore.fit());
 $("#graph-reset").addEventListener("click", () => {
-  $("#graph-topic").value = "";
   $("#graph-input").value = "";
-  Graph.load(OVERVIEW);
+  Explore.sources = new Set();
+  Explore.range = null;
+  Explore.renderSources();
+  Explore.loadTimeline();
+  Panel.close();
+  Explore.go(null);
+});
+
+// -- finding a place to start: entities and chats by name -----------------------------------
+
+const Search = {
+  conversations: [],
+  timer: null,
+
+  async suggest(q) {
+    const box = $("#graph-suggest");
+    if (!q) {
+      box.hidden = true;
+      return;
+    }
+    const lower = q.toLowerCase();
+    const chats = this.conversations.filter((c) => (c.title || "").toLowerCase().includes(lower)).slice(0, 5);
+    // Names containing the letters typed, those starting with them first; then
+    // word matches on names and summaries, for entities beyond the most mentioned.
+    this.entities ??= api("/entities?limit=500").catch(() => []);
+    const named = (await this.entities)
+      .filter((e) => (e.name || "").toLowerCase().includes(lower))
+      .sort((a, b) => Number(!a.name.toLowerCase().startsWith(lower)) - Number(!b.name.toLowerCase().startsWith(lower)) || b.mentions - a.mentions);
+    let worded = [];
+    if (named.length < 6) {
+      try {
+        worded = await api(`/entities?${new URLSearchParams({ q, limit: 6 })}`);
+      } catch {
+        // word search is optional here
+      }
+    }
+    const seen = new Set();
+    const things = [...named, ...worded].filter((e) => !seen.has(e.id) && seen.add(e.id)).slice(0, 6);
+    if ($("#graph-input").value.trim() !== q) return;
+    box.innerHTML =
+      (things.length ? `<div class="suggest-title">Entities</div>${things
+        .map((e) => `<button type="button" data-pick="entity" data-id="${esc(e.id)}" data-label="${esc(e.name)}"><span class="trail-dot entity"></span>${esc(e.name)}<span class="muted">${esc(e.type || "")}</span></button>`)
+        .join("")}` : "") +
+      (chats.length ? `<div class="suggest-title">Chats</div>${chats
+        .map((c) => `<button type="button" data-pick="conversation" data-id="${esc(c.id)}" data-label="${esc(c.title || "Untitled conversation")}"><span class="trail-dot conversation"></span>${esc(c.title || "Untitled conversation")}<span class="muted">${esc(date(c.created_at))}</span></button>`)
+        .join("")}` : "") ||
+      '<p class="muted suggest-empty">Nothing by that name.</p>';
+    box.hidden = false;
+  },
+
+  pick(button) {
+    $("#graph-suggest").hidden = true;
+    $("#graph-input").value = "";
+    const target = { kind: button.dataset.pick, id: button.dataset.id, label: button.dataset.label };
+    Explore.go(target);
+    Panel.open({ kind: target.kind, id: target.id }, true);
+  },
+};
+
+$("#graph-input").addEventListener("input", (event) => {
+  clearTimeout(Search.timer);
+  const q = event.target.value.trim();
+  Search.timer = setTimeout(() => Search.suggest(q), 160);
+});
+$("#graph-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const first = $("#graph-suggest [data-pick]");
+  if (first) Search.pick(first);
+});
+$("#graph-suggest").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-pick]");
+  if (button) Search.pick(button);
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("#graph-form")) $("#graph-suggest").hidden = true;
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !document.querySelector("dialog[open]")) Graph.close();
+  if (event.key !== "Escape" || document.querySelector("dialog[open]")) return;
+  if (!$("#graph-suggest").hidden) $("#graph-suggest").hidden = true;
+  else if (!$("#explore-panel").hidden) Panel.close();
 });
+
+/** Open the Explore view centred on an entity, a conversation, or a topic. */
+function explore(kind, id, label) {
+  show("explore", false);
+  const target = kind ? { kind, id, label } : null;
+  Explore.go(target);
+  if (kind === "entity" || kind === "conversation") Panel.open({ kind, id }, true);
+}
