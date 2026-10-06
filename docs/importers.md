@@ -27,6 +27,7 @@ knowledge graph and caches along; see [export.md](export.md).
 | What | Files | Becomes |
 |---|---|---|
 | Chat exports | ChatGPT and Claude `conversations.json`, Gemini `MyActivity.json`, wherever they sit | conversations |
+| Coding agent sessions | Claude Code and Codex CLI session files (`.jsonl`), wherever they sit | one conversation per session, source `claude_code` or `codex` |
 | Notes | Markdown and text (`.md`, `.markdown`, `.txt`), Obsidian vaults | notes, source `markdown` |
 | Documents | PDF, Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`), OpenDocument (`.odt`, `.odp`, `.ods`), EPUB, RTF, web pages (`.html`) | notes, source `document` |
 | Data | CSV and TSV, JSON and JSON Lines, XML | notes: a line per row, or `key.path: value` lines |
@@ -158,6 +159,36 @@ Limitations you should know about:
 - Only the JSON format is supported. The HTML format is rejected with a message
   telling you how to re-export.
 - Non-prompt activity such as feedback is ignored.
+
+## Claude Code and the Codex CLI
+
+```bash
+chatlore import ~/.claude/projects        # every Claude Code session
+chatlore import ~/.codex/sessions         # every Codex CLI session
+```
+
+Coding agents keep each session as a JSON Lines file: Claude Code under
+`~/.claude/projects/<project>/`, the Codex CLI under
+`~/.codex/sessions/<year>/<month>/<day>/`. Each session becomes one
+conversation, recognised by its records wherever the file sits, so a zip of
+session files imports too. Importing again adds what was said since.
+
+- What you asked and what the agent answered are kept as text, and are chunked,
+  embedded, and read into the knowledge graph like any chat.
+- Tool calls and their results are kept as parts of the messages, each
+  shortened to 2,000 characters, since they are mostly file contents and logs.
+  They are found by word search but not chunked.
+- Hidden reasoning, subagent side chains, slash commands and their output, and
+  the context the tools add to your turn, such as Codex's environment details,
+  are left out.
+- The title is the one you gave the session in Claude Code, else its summary,
+  else the first line you typed. The project folder and git branch are kept as
+  metadata.
+- A Claude Code session that was compacted stays one conversation from start to
+  end.
+
+Cursor keeps its chats in an internal database rather than in files, and is
+not read yet.
 
 ## Markdown and Obsidian
 

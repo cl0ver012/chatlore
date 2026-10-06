@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Claude Code and Codex CLI sessions import like any export: `chatlore import
+  ~/.claude/projects` or `~/.codex/sessions`, or the session files in **Your data**.
+  Each session becomes a conversation, source `claude_code` or `codex`, recognised by its
+  records wherever it sits. What was said is chunked and read into the graph; tool calls and
+  results are kept, shortened, but not chunked; hidden reasoning, subagent side chains, slash
+  commands, and injected context are left out. Guide in `docs/importers.md`.
 - Anthropic and Gemini as model providers, through their official SDKs:
   `CHATLORE_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`, or `gemini` with
   `GEMINI_API_KEY`, after `pip install 'chatlore[anthropic]'` or `'chatlore[gemini]'`.

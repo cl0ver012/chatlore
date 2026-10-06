@@ -7,7 +7,8 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
 **Status: pre-alpha.** Importing and search work today: ChatGPT, Claude, and
-Gemini exports, notes, documents (PDF, Word, Excel, and more), email, and
+Gemini exports, Claude Code and Codex sessions, notes, documents (PDF, Word,
+Excel, and more), email, and
 archives of any of them land in a local library and a SQLite graph store you can
 search from the terminal by words, by meaning, or both. A language model turns
 them into a knowledge graph of entities, relationships, and topics that you can
@@ -74,8 +75,8 @@ SQLite in [docs/falkordb.md](docs/falkordb.md).
 ChatLore is a local-first, open-source graph knowledge base built from your own
 conversations and documents.
 
-- **Import** your history from ChatGPT, Claude, and Gemini exports, plus
-  Markdown folders, notes, and later local coding-agent sessions.
+- **Import** your history from ChatGPT, Claude, and Gemini exports, Claude Code
+  and Codex CLI sessions, Markdown folders, notes, and documents.
 - **Link** everything into one graph of conversations, entities, topics, and
   facts, with every extracted fact pointing back to the message it came from.
 - **Search** across all of it with full-text, vector, and graph retrieval
