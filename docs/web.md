@@ -7,7 +7,8 @@ chatlore serve        # then open http://127.0.0.1:8000
 `chatlore serve` hosts a web interface next to the REST API. It is plain HTML,
 CSS, and JavaScript served from the package: no build step, no CDN, nothing
 loaded from the internet, so it works offline like the rest of ChatLore. It
-follows the system's light or dark setting.
+has a light and a dark theme: it follows the system's setting until you choose
+one with the toggle at the bottom of the sidebar, and remembers that choice.
 
 ## Views
 
@@ -23,10 +24,9 @@ follows the system's light or dark setting.
   Clicking one opens it as a chat.
 - **Topics.** The topic reports from `chatlore extract` as cards, largest first,
   with a word filter. A topic opens with its summary, findings, and entities, and
-  can be opened in the graph.
-- **Graph.** The knowledge graph, drawn with a force-directed layout: each entity
-  is a circle sized by how often it is mentioned and coloured by its topic, and
-  related entities are linked.
+  can be explored in the graph.
+- **Explore.** The knowledge graph and the chats it came from, side by side with
+  a panel to read them in; see below.
 
 ## Your data
 
@@ -53,26 +53,49 @@ On your own machine the upload goes into the library itself. On a public server
 that takes uploads, it goes into a private library of the visitor's own; see
 [hosting.md](hosting.md#visitors-own-data).
 
-## Exploring the graph
+## Exploring your conversations through the graph
 
-The graph fills the page, with a floating toolbar, a legend of the largest
-topics shown, and the twenty most mentioned entities labelled. It starts with
-the hundred most mentioned entities that have relationships. From there:
+**Explore** draws the knowledge graph together with the conversations it came
+from, so the graph is a way into your chat history: entities are circles,
+coloured by topic and sized by how often they come up, and chats are rounded
+squares, coloured by where they came from. Solid lines link related entities,
+dotted lines link an entity to the chats that mention it.
 
-- type a name into **Find an entity** to show it with its closest neighbours;
-- choose a topic from the list, or click one in the legend, to show its entities;
-- click an entity to open a drawer with its summary, other names, topic,
-  relationships, facts, and the conversations it came up in; each fact links to
-  the message that said it;
-- **Add neighbours** adds an entity's related entities to what is drawn, and
-  **Focus** redraws the graph around it;
-- drag entities or the background, scroll to zoom, and double-click or use the
-  fit button to frame the graph; the reset button goes back to the overview.
+- It starts with an overview: the most mentioned entities and the chats that
+  talk about them most.
+- Click an entity and the graph centres on it, with the entities related to it
+  and the chats that mention it. The panel beside the graph shows its summary,
+  the facts established about it, each linking to the message that said it, the
+  chats it came up in, and related entities.
+- Click a chat and it opens in the panel to read, while the graph centres on it:
+  the entities it mentions, and the other chats that share the most of them.
+  Every entity the chat mentions is a link, in a row at the top and wherever its
+  name appears in the text; clicking one steers the graph to that entity while
+  the chat stays open. Tool output from coding agents is folded away.
+- A trail above the graph lists where you have been, from the overview on;
+  click any step to go back to it. The panel has its own back button.
+- **Find an entity or a chat** suggests both as you type, by any part of a name.
+- The timeline at the bottom shows how many chats started each month; drag
+  across it to keep only the chats from those months, and **All time** to undo.
+  The source buttons in the toolbar keep only the chats from some sources.
+- Click a topic in the legend to see its entities and the chats about them.
+- Drag nodes or the background, scroll to zoom, and double-click or use the fit
+  button to frame the graph; the reset button goes back to the overview and
+  clears the filters.
 
-Hovering or selecting an entity highlights its links and fades everything else.
-The layout settles in a few seconds and then stops, so a large graph does not
-keep the processor busy.
+Hovering over a node shows what it is and highlights its links. The layout
+settles in a few seconds and then stops, so it does not keep the processor busy,
+and the nodes still shown keep their place when you move on.
 
-The graph view is backed by `GET /graph`, which returns entities, the links
-among them, and their topics: around an entity with `entity=<id>`, for a topic
-with `topic=<id>`, or the most mentioned entities otherwise, up to `limit`.
+A chat opened from **Search**, **Ask**, or **Conversations** also shows its
+entities as links, and **Explore in the graph** opens it there.
+
+Explore is backed by `GET /explore`, which returns entities, chats, the links
+among them, and the entities' topics: around an entity with `entity=<id>`, a chat
+with `conversation=<id>`, or a topic with `topic=<id>`, or an overview. `source`
+(repeatable), `since`, and `until` (a month such as `2026-03`, or a day) keep
+only some chats, by where they came from and the date they started. `entities`
+and `conversations` set how many of each, 40 and 16 by default. `GET
+/explore/timeline` counts the chats started each month, and `GET
+/conversations/{id}` lists the entities a chat mentions with the messages they
+are in. `GET /graph`, the entity-only graph, is still there.

@@ -14,7 +14,8 @@ search from the terminal by words, by meaning, or both. A language model turns
 them into a knowledge graph of entities, relationships, and topics that you can
 browse and search, with facts that each lead back to the message that said
 them, and you can ask questions and get answers with sources, in
-the terminal, over a REST API, or in a web interface with a graph explorer. AI
+the terminal, over a REST API, or in a web interface where the knowledge graph
+is a way into your chat history. AI
 assistants such as Claude and Cursor can search it too, through an MCP server.
 A library moves between machines as one archive file. The roadmap below shows
 what comes next.
@@ -100,7 +101,7 @@ extraction is an optional enrichment you can re-run with a better model later.
 | M3 | Chunking, embeddings, hybrid search | done |
 | M4 | Entity, topic, and fact extraction with provenance | done |
 | M5 | REST API with streaming chat | done |
-| M6 | Web UI: conversations, graph explorer, chat | basic version done |
+| M6 | Web UI: conversations, graph explorer, chat | done: Explore your chats through the graph, light and dark themes |
 | M7 | MCP server for Claude Desktop, Claude Code, Cursor, ChatGPT | done; ChatGPT through /mcp once the demo is online |
 | M8 | Easy to try: PyPI package, demo library, export and import | done, v0.1.0 |
 | M9 | Hosted demo | public mode, MCP over HTTP, Docker image, and Hugging Face Space deployment done; going live next |
