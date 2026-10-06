@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+import sys
+import threading
+import time
+import types
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -147,3 +151,28 @@ def test_embedder_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert embedder.name == "some/other-model"
     assert isinstance(embedder, FastEmbedEmbedder)
     assert embedder.embed_passages([]) == []  # no model is loaded for empty input
+
+
+def test_requests_arriving_together_share_one_model_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    loads: list[str] = []
+
+    class Model:
+        def __init__(self, name: str, **options: object) -> None:
+            loads.append(name)
+            time.sleep(0.05)  # a download in progress
+
+        def query_embed(self, texts: list[str]) -> Iterator[list[float]]:
+            return iter([[1.0, 0.0] for _ in texts])
+
+    monkeypatch.setitem(sys.modules, "fastembed", types.SimpleNamespace(TextEmbedding=Model))
+    embedder = FastEmbedEmbedder("some-model", cache_dir=tmp_path)
+
+    threads = [threading.Thread(target=embedder.embed_query, args=("hi",)) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert loads == ["some-model"]

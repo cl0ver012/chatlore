@@ -172,6 +172,9 @@ def _topic(node: Node, entities: int | None = None) -> dict[str, Any]:
     }
 
 
+SEARCH_WAIT = 2.0
+"""Seconds a search waits for the embedding model before answering by words alone."""
+
 MAX_UPLOAD = 200_000_000
 """Bytes an upload may have unless the server says otherwise."""
 REQUEST_HEADER = "X-ChatLore"
@@ -290,6 +293,7 @@ def create_app(
 
     embedders: list[Embedder] = []
     loading = threading.Lock()
+    warmed = threading.Event()
 
     def embedder() -> Embedder:
         """One embedding model for the whole server, loaded on first use."""
@@ -297,6 +301,16 @@ def create_app(
             if not embedders:
                 embedders.append(make_embedder(library))
             return embedders[0]
+
+    def warm_up() -> None:
+        """Load the embedding model before the first search needs it. The first time
+        on a machine that downloads it, which can take minutes on a slow connection."""
+        try:
+            embedder().embed_query("warm up")
+        except EmbeddingError:
+            pass  # a search that needs it reports the error
+        finally:
+            warmed.set()
 
     # make_llm is looked up when an import needs it, so it can be replaced in tests.
     imports = Imports(embedder, lambda: make_llm(), extract_limit=extract_limit)
@@ -320,6 +334,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        with open_store(library) as graph:
+            embedded = graph.count_embeddings() > 0
+        if embedded or spaces is not None:
+            threading.Thread(target=warm_up, name="chatlore-warm-up", daemon=True).start()
+        else:
+            warmed.set()
         async with anyio.create_task_group() as tasks:
             if spaces is not None:
                 tasks.start_soon(sweeping)
@@ -346,9 +366,15 @@ def create_app(
         space = _visitor.get()
         return space.home if space is not None else library
 
-    def embed(text: str, graph: GraphStore) -> list[float] | None:
-        """The query's embedding, or None when the library has no embeddings."""
+    def embed(text: str, graph: GraphStore, wait: float | None = None) -> list[float] | None:
+        """The query's embedding, or None when the library has no embeddings.
+
+        With ``wait``, also None when the model is still loading after that many
+        seconds, so a search can answer by words instead of hanging.
+        """
         if graph.count_embeddings() == 0:
+            return None
+        if wait is not None and not warmed.wait(wait):
             return None
         try:
             return normalise(embedder().embed_query(text))
@@ -542,14 +568,22 @@ def create_app(
 
     @app.get("/search")
     def search(
+        response: Response,
         q: Annotated[str, Query(min_length=1)],
         limit: Annotated[int, Query(ge=1, le=100)] = 10,
         source: Annotated[list[str] | None, Query()] = None,
         mode: Annotated[str, Query(pattern="^(words|hybrid)$")] = "hybrid",
     ) -> list[dict[str, Any]]:
-        """Messages matching ``q``: by words only, or by words, meaning, and entities."""
+        """Messages matching ``q``: by words only, or by words, meaning, and entities.
+
+        While the embedding model is still loading, such as during its first
+        download, a hybrid search answers by words and says so in the header
+        ``X-ChatLore-Meaning: loading``.
+        """
         with store() as graph:
-            vector = embed(q, graph) if mode == "hybrid" else None
+            vector = embed(q, graph, wait=SEARCH_WAIT) if mode == "hybrid" else None
+            if vector is None and mode == "hybrid" and not warmed.is_set():
+                response.headers["X-ChatLore-Meaning"] = "loading"
             if vector is None:
                 return [
                     {

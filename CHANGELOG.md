@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The first search after `chatlore serve` or `chatlore demo` on a new machine no longer hangs
+  while the embedding model downloads, which took over three minutes on a slow connection.
+  The server loads the model in the background as it starts, a search that comes first
+  answers by words and the web interface says why, and searches arriving together share one
+  download instead of starting one each.
 - Visitors' own libraries work when the demo is shown in another site's frame, as on a Hugging
   Face Space's page: over HTTPS the library cookie is `SameSite=None`, `Secure`, and
   `Partitioned`. It used to be dropped there, so every upload started a new, empty library.

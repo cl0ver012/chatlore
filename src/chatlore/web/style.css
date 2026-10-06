@@ -260,6 +260,7 @@ main { overflow-y: auto; position: relative; }
 .segmented button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); font-weight: 600; }
 
 .empty { text-align: center; padding: 48px 20px; color: var(--muted); }
+.search-note { margin: 0 0 4px; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-text); font-size: 13px; }
 
 /* -- ask ---------------------------------------------------------------------------- */
 

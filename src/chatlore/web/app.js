@@ -652,8 +652,15 @@ async function search() {
   }
   list.innerHTML = '<p class="empty">Searching…</p>';
   try {
-    const hits = await api(`/search?${new URLSearchParams({ q, limit: 25, mode: searchMode })}`);
-    list.innerHTML = hits.length
+    const response = await fetch(`/search?${new URLSearchParams({ q, limit: 25, mode: searchMode })}`);
+    if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+    const hits = await response.json();
+    // The first search on a new machine can come before the model that searches by
+    // meaning has downloaded; the server then answers by words and says so.
+    const note = response.headers.get("X-ChatLore-Meaning") === "loading"
+      ? '<p class="search-note">Smart search is still starting up, so these are matches by words only. The first time, it downloads a small model; search again in a minute.</p>'
+      : "";
+    list.innerHTML = note + (hits.length
       ? hits
           .map(
             (h) => `<button type="button" class="result" data-conversation="${esc(h.conversation_id)}" data-message="${esc(h.message_id)}">
@@ -666,7 +673,7 @@ async function search() {
               <div class="result-text">${highlight(h.snippet.slice(0, 340), h.matched.includes("words"))}${h.snippet.length > 340 ? "…" : ""}</div></button>`,
           )
           .join("")
-      : '<p class="empty">No matches. Try other words, or switch to Smart search.</p>';
+      : '<p class="empty">No matches. Try other words, or switch to Smart search.</p>');
   } catch (error) {
     list.innerHTML = `<p class="error">${esc(error.message)}</p>`;
   }
