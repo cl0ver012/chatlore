@@ -32,7 +32,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --locked --extra anthropic --extra gemini
 
       - name: Lint
         run: uv run ruff check .

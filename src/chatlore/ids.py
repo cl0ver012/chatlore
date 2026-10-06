@@ -67,3 +67,8 @@ def entity_id(key: str) -> str:
 def topic_id(key: str) -> str:
     """Return the stable id of a topic from the key of the entities in it."""
     return f"topic_{_short_digest(key)}"
+
+
+def fact_id(subject: str, statement: str) -> str:
+    """Return the stable id of a fact from its subject's key and its statement's key."""
+    return f"fact_{_short_digest(subject, statement)}"
