@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Anthropic and Gemini as model providers, through their official SDKs:
+  `CHATLORE_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`, or `gemini` with
+  `GEMINI_API_KEY`, after `pip install 'chatlore[anthropic]'` or `'chatlore[gemini]'`.
+  Extraction and chat work as with any OpenAI-compatible API, reasoning maps onto each
+  provider's own setting, and declined or cut-off answers are asked again next run.
+  `chatlore doctor` names the key each provider needs. Guide in `docs/models.md`.
 - Facts with provenance: `chatlore extract` also finds what each passage establishes, such as
   decisions, preferences, plans, settings, and findings, as one sentence about an entity. A
   fact links to its entity, to a second entity it involves, and with `ASSERTED_IN` to every

@@ -3,7 +3,10 @@
 ChatLore talks to any OpenAI-compatible chat API. The default is OpenRouter,
 which serves many inexpensive open models behind one key. Ollama, vLLM,
 LM Studio, and other local servers work by pointing the base URL at them.
-Anything with the ``LLM`` shape can replace the client.
+Anthropic's and Google's own APIs work too, with ``CHATLORE_LLM_PROVIDER`` set
+to ``anthropic`` or ``gemini`` and their optional SDKs installed
+(``chatlore.llm_anthropic``, ``chatlore.llm_gemini``). Anything with the
+``LLM`` shape can replace the client.
 
 Importing and searching never need a model. Only extraction and chat do.
 """
@@ -31,6 +34,20 @@ MODEL_ENV = "CHATLORE_LLM_MODEL"
 API_KEY_ENV = "CHATLORE_LLM_API_KEY"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 REASONING_ENV = "CHATLORE_LLM_REASONING"
+PROVIDER_ENV = "CHATLORE_LLM_PROVIDER"
+
+PROVIDERS = ("openai", "anthropic", "gemini")
+"""Where the model runs: any OpenAI-compatible API (the default), or Anthropic's or Google's own."""
+
+PROVIDER_DEFAULTS = {
+    "anthropic": ("https://api.anthropic.com", "claude-opus-5-5", ("ANTHROPIC_API_KEY",)),
+    "gemini": (
+        "https://generativelanguage.googleapis.com",
+        "gemini-3.5-flash-lite",
+        ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    ),
+}
+"""Base URL, model, and the variables holding the key, for each provider with its own API."""
 
 REASONING_LEVELS = ("off", "low", "medium", "high", "default")
 """How much the model may think before answering; "default" leaves it to the model.
@@ -100,6 +117,15 @@ class StreamingLLM(LLM, Protocol):
         ...
 
 
+class ClosableLLM(StreamingLLM, Protocol):
+    """A configured model, holding a connection until it is closed."""
+
+    base_url: str
+    reasoning: str
+
+    def close(self) -> None: ...
+
+
 def _params(messages: Sequence[ChatMessage]) -> list[ChatCompletionMessageParam]:
     params: list[ChatCompletionMessageParam] = []
     for message in messages:
@@ -120,10 +146,18 @@ class LLMSettings:
     model: str
     api_key: str | None
     reasoning: str = DEFAULT_REASONING
+    provider: str = "openai"
 
     @property
     def is_openrouter(self) -> bool:
-        return _is_openrouter(self.base_url)
+        return self.provider == "openai" and _is_openrouter(self.base_url)
+
+    @property
+    def key_env(self) -> str | None:
+        """The variable to set for a key, or None when the server needs none."""
+        if self.provider in PROVIDER_DEFAULTS:
+            return PROVIDER_DEFAULTS[self.provider][2][0]
+        return OPENROUTER_KEY_ENV if self.is_openrouter else None
 
 
 def _is_openrouter(base_url: str) -> bool:
@@ -261,20 +295,35 @@ def llm_settings() -> LLMSettings:
     """Read the model settings from the environment, falling back to the defaults.
 
     ``OPENROUTER_API_KEY`` is only used when the base URL is OpenRouter, so the
-    key is never sent to another server by accident.
+    key is never sent to another server by accident. Likewise
+    ``ANTHROPIC_API_KEY`` is only used for Anthropic, and ``GEMINI_API_KEY`` or
+    ``GOOGLE_API_KEY`` only for Gemini.
     """
-    base_url = os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL
-    model = os.environ.get(MODEL_ENV) or DEFAULT_MODEL
+    provider = (os.environ.get(PROVIDER_ENV) or "openai").strip().lower()
+    if provider not in PROVIDERS:
+        raise LLMError(f"{PROVIDER_ENV} must be one of {', '.join(PROVIDERS)}")
     reasoning = (os.environ.get(REASONING_ENV) or DEFAULT_REASONING).strip().lower()
     if reasoning not in REASONING_LEVELS:
         raise LLMError(f"{REASONING_ENV} must be one of {', '.join(REASONING_LEVELS)}")
     key = os.environ.get(API_KEY_ENV) or None
-    if key is None and _is_openrouter(base_url):
-        key = os.environ.get(OPENROUTER_KEY_ENV) or None
-    return LLMSettings(base_url, model, key, reasoning)
+    if provider in PROVIDER_DEFAULTS:
+        base_url, model, key_envs = PROVIDER_DEFAULTS[provider]
+        for name in key_envs:
+            key = key or os.environ.get(name) or None
+    else:
+        base_url, model = DEFAULT_BASE_URL, DEFAULT_MODEL
+        if key is None and _is_openrouter(os.environ.get(BASE_URL_ENV) or base_url):
+            key = os.environ.get(OPENROUTER_KEY_ENV) or None
+    return LLMSettings(
+        os.environ.get(BASE_URL_ENV) or base_url,
+        os.environ.get(MODEL_ENV) or model,
+        key,
+        reasoning,
+        provider,
+    )
 
 
-def make_llm() -> OpenAICompatibleLLM:
+def make_llm() -> ClosableLLM:
     """Return the configured model, or explain what is missing."""
     settings = llm_settings()
     if settings.api_key is None and settings.is_openrouter:
@@ -282,9 +331,31 @@ def make_llm() -> OpenAICompatibleLLM:
             f"no API key for OpenRouter. Set {OPENROUTER_KEY_ENV}, or point "
             f"{BASE_URL_ENV} at a local server such as http://localhost:11434/v1"
         )
+    if settings.provider in PROVIDER_DEFAULTS:
+        return _provider_llm(settings)
     return OpenAICompatibleLLM(
         settings.model,
         settings.base_url,
         settings.api_key or _NO_KEY,
         reasoning=settings.reasoning,
+    )
+
+
+def _provider_llm(settings: LLMSettings) -> ClosableLLM:
+    """The client for Anthropic's or Google's own API, from its optional SDK."""
+    name = settings.provider
+    if settings.api_key is None:
+        raise LLMError(f"no API key for {name}. Set {settings.key_env} or {API_KEY_ENV}")
+    try:
+        if name == "anthropic":
+            from chatlore.llm_anthropic import AnthropicLLM as Client
+        else:
+            from chatlore.llm_gemini import GeminiLLM as Client  # type: ignore[assignment]
+    except ImportError as error:
+        raise LLMError(
+            f"{name} needs its SDK: pip install 'chatlore[{name}]' "
+            f"(or uv tool install 'chatlore[{name}]')"
+        ) from error
+    return Client(
+        settings.model, settings.api_key, base_url=settings.base_url, reasoning=settings.reasoning
     )

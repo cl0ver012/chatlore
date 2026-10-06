@@ -58,6 +58,12 @@ chatlore = "chatlore.cli:run"
 falkordb = [
     "falkordb>=1.7",
 ]
+anthropic = [
+    "anthropic>=1.11",
+]
+gemini = [
+    "google-genai>=2.28",
+]
 
 [build-system]
 requires = ["hatchling>=1.25"]
@@ -115,7 +121,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # google-genai, on Python 3.14; harmless until Python 3.17.
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning",
+]
 
 [tool.coverage.run]
 source = ["chatlore"]
