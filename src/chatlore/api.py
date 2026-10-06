@@ -55,6 +55,7 @@ from chatlore import __version__
 from chatlore.archive import export_archive, export_markdown
 from chatlore.chat import MAX_SOURCES, ChatLimits, Context, Source, answer, cited, retrieve
 from chatlore.embeddings import Embedder, EmbeddingError, make_embedder, normalise
+from chatlore.explore import NotFoundError, Window, conversation_entities, explore, timeline
 from chatlore.facts import facts_about, find_facts
 from chatlore.imports import Imports, safe_relative
 from chatlore.library import Library
@@ -604,8 +605,10 @@ def create_app(
 
     @app.get("/conversations/{conversation_id}")
     def conversation(conversation_id: str) -> dict[str, Any]:
+        """A conversation's messages, and the entities it mentions with the messages they are in."""
         with store() as graph:
             found = graph.get_conversation(conversation_id)
+            mentioned = conversation_entities(graph, conversation_id) if found else []
         if found is None:
             raise HTTPException(404, "no such conversation")
         return {
@@ -613,6 +616,7 @@ def create_app(
             "source": found.source.value,
             "title": found.title,
             "created_at": found.created_at.isoformat() if found.created_at else None,
+            "entities": mentioned,
             "messages": [
                 {
                     "id": message.id,
@@ -688,6 +692,45 @@ def create_app(
         """Facts whose statement or subject matches ``q``, or the newest facts."""
         with store() as graph:
             return [item.as_dict() for item in find_facts(graph, q, limit)]
+
+    @app.get("/explore")
+    def explore_view(
+        entity: str | None = None,
+        conversation: str | None = None,
+        topic: str | None = None,
+        source: Annotated[list[str] | None, Query()] = None,
+        since: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}(-\d{2})?$")] = None,
+        until: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}(-\d{2})?$")] = None,
+        entities: Annotated[int, Query(ge=1, le=200)] = 40,
+        conversations: Annotated[int, Query(ge=0, le=100)] = 16,
+    ) -> dict[str, Any]:
+        """Entities and the conversations they came up in, to explore the library as a graph.
+
+        Around an ``entity``, a ``conversation``, or a ``topic``, or an overview;
+        ``source``, ``since``, and ``until`` keep only some conversations.
+        """
+        window = Window(frozenset(source or ()), since, until)
+        with store() as graph:
+            try:
+                return explore(
+                    graph,
+                    entity=entity,
+                    conversation=conversation,
+                    topic=topic,
+                    window=window,
+                    entities=entities,
+                    conversations=conversations,
+                )
+            except NotFoundError as error:
+                raise HTTPException(404, str(error)) from error
+
+    @app.get("/explore/timeline")
+    def explore_timeline(
+        source: Annotated[list[str] | None, Query()] = None,
+    ) -> list[dict[str, Any]]:
+        """How many conversations started in each month, oldest first."""
+        with store() as graph:
+            return timeline(graph, source or ())
 
     @app.get("/topics")
     def topics(
