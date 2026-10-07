@@ -899,7 +899,7 @@ const Explore = {
       if (this.focus) this.focus.pinned = true;
       [...this.nodes].filter((n) => n.kind === "entity").sort((a, b) => b.mentions - a.mentions).forEach((n) => this.color(n.topic));
       this.alpha = previous.size ? 0.7 : 1;
-      this.fitted = false;
+      this.following = true;
       const chats = this.nodes.filter((n) => n.kind === "conversation").length;
       const things = this.nodes.length - chats;
       $("#graph-info").textContent = this.nodes.length
@@ -1092,31 +1092,41 @@ const Explore = {
     // when the browser draws fewer frames, for example in a background tab.
     const steps = Math.min(12, Math.max(1, Math.round((now - (this.last || now)) / 16)));
     this.last = now;
-    for (let i = 0; i < steps && this.alpha > 0.01 && this.nodes.length; i++) {
-      this.step();
-      if (this.alpha < 0.08 && !this.fitted && !this.pointer) {
-        this.fit();
-        this.fitted = true;
+    for (let i = 0; i < steps && this.alpha > 0.01 && this.nodes.length; i++) this.step();
+    // The camera follows the layout as it settles, gliding rather than jumping,
+    // until you pan, zoom, or drag a node yourself.
+    if (this.following && !this.pointer) {
+      const goal = this.framing();
+      if (goal) {
+        const ease = 1 - 0.88 ** steps;
+        this.view.scale += (goal.scale - this.view.scale) * ease;
+        this.view.x += (goal.x - this.view.x) * ease;
+        this.view.y += (goal.y - this.view.y) * ease;
       }
     }
     this.draw();
     requestAnimationFrame((time) => this.frame(time));
   },
 
-  /** Zoom and pan to the bulk of the graph, leaving room for the floating panels.
-   * The outermost 3% on each side are left out, so a few stragglers on long links
-   * do not shrink everything else. */
-  fit() {
-    if (!this.nodes.length || !this.width) return;
+  /** The view that shows the bulk of the graph, leaving room for the floating
+   * panels. The outermost 5% on each side are left out, so a few stragglers on
+   * long links do not shrink everything else. */
+  framing() {
+    if (!this.nodes.length || !this.width) return null;
     const xs = this.nodes.map((n) => n.x).sort((a, b) => a - b);
     const ys = this.nodes.map((n) => n.y).sort((a, b) => a - b);
-    const edge = Math.floor(this.nodes.length * 0.03);
+    const edge = Math.floor(this.nodes.length * 0.05);
     const last = this.nodes.length - 1 - edge;
     const [left, right, top, bottom] = [xs[edge], xs[last], ys[edge], ys[last]];
-    const width = this.width - 140;
-    const height = this.height - 260;
+    const width = this.width - 160;
+    const height = this.height - 280;
     const scale = Math.max(0.25, Math.min(width / (right - left || 1), height / (bottom - top || 1), 1.8));
-    this.view = { scale, x: -(left + right) / 2, y: -(top + bottom) / 2 - 10 / scale };
+    return { scale, x: -(left + right) / 2, y: -(top + bottom) / 2 - 10 / scale };
+  },
+
+  /** Frame the graph, and keep it framed while the layout moves. */
+  fit() {
+    this.following = true;
   },
 
   toScreen(x, y) {
@@ -1265,7 +1275,10 @@ const Explore = {
         this.tooltip(this.hover, sx, sy);
         return;
       }
-      if (Math.abs(sx - p.sx) + Math.abs(sy - p.sy) > 3) p.moved = true;
+      if (Math.abs(sx - p.sx) + Math.abs(sy - p.sy) > 3) {
+        p.moved = true;
+        this.following = false;
+      }
       if (p.node) {
         [p.node.x, p.node.y] = this.toWorld(sx, sy);
         p.node.vx = p.node.vy = 0;
@@ -1290,6 +1303,7 @@ const Explore = {
       "wheel",
       (event) => {
         event.preventDefault();
+        this.following = false;
         const [sx, sy] = position(event);
         const [wx, wy] = this.toWorld(sx, sy);
         this.view.scale = Math.min(4, Math.max(0.2, this.view.scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
